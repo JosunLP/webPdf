@@ -21,6 +21,17 @@ export interface TextFormatting {
   isUnderline: boolean;
 }
 
+// Kommentar-Interface hinzufügen
+export interface Comment {
+  id: string;
+  pageNumber: number;
+  position: Point;
+  text: string;
+  author: string;
+  createdAt: Date;
+  color: string;
+}
+
 // Standard-Textformatierung
 export const defaultFormatting: TextFormatting = {
   fontFamily: 'Arial',
@@ -63,6 +74,7 @@ export interface PDFPage {
   canvas?: HTMLCanvasElement;
   formatting: TextFormatting;
   shapes: ShapeElement[]; // Array für grafische Elemente
+  comments: Comment[]; // Array für Kommentare
 }
 
 // Interface für PDF-Dokumentinformationen
@@ -89,7 +101,9 @@ export enum DrawingTool {
   CIRCLE = 'circle',
   LINE = 'line',
   ARROW = 'arrow',
-  TEXT = 'text'
+  TEXT = 'text',
+  COMMENT = 'comment',
+  SELECT = 'select'  // Neues Auswahlwerkzeug
 }
 
 // Store für das aktuelle PDF-Dokument
@@ -433,7 +447,8 @@ export class PDFService {
             height: viewport.height,
             canvas,
             formatting: pageFormatting,
-            shapes: shapes // Extrahierte Shapes hinzufügen
+            shapes: shapes, // Extrahierte Shapes hinzufügen
+            comments: [] // Initialisiere leeres Kommentar-Array
           });
         } catch (pageError) {
           console.error(`Fehler beim Laden der Seite ${i}:`, pageError);
@@ -444,7 +459,8 @@ export class PDFService {
             width: 595, // Standard A4 Breite
             height: 842, // Standard A4 Höhe
             formatting: {...defaultFormatting},
-            shapes: []
+            shapes: [],
+            comments: [] // Initialisiere leeres Kommentar-Array
           });
         }
       }
@@ -531,7 +547,8 @@ export class PDFService {
               height: 842,
               canvas: canvas,
               formatting: {...defaultFormatting},
-              shapes: []
+              shapes: [],
+              comments: [] // Initialisiere leeres Kommentar-Array
             }],
             modified: true,
             currentFormatting: {...defaultFormatting}
@@ -851,6 +868,255 @@ export class PDFService {
     });
     
     return results;
+  }
+
+  /**
+   * Fügt einen neuen Kommentar zu einer Seite hinzu
+   */
+  static addComment(pageNumber: number, position: Point, text: string, author: string = 'Benutzer'): void {
+    currentPdfDocument.update((doc) => {
+      if (!doc) return null;
+      
+      const commentId = `comment-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+      const comment: Comment = {
+        id: commentId,
+        pageNumber,
+        position,
+        text,
+        author,
+        createdAt: new Date(),
+        color: '#FFEB3B' // Standard Gelb für Kommentare
+      };
+      
+      // Finden der Seite und Hinzufügen des Kommentars
+      const updatedPages = doc.pages.map((page) => {
+        if (page.pageNumber === pageNumber) {
+          return { 
+            ...page, 
+            comments: [...page.comments, comment]
+          };
+        }
+        return page;
+      });
+      
+      return {
+        ...doc,
+        pages: updatedPages,
+        modified: true
+      };
+    });
+  }
+  
+  /**
+   * Entfernt einen Kommentar von einer Seite
+   */
+  static removeComment(pageNumber: number, commentId: string): void {
+    currentPdfDocument.update((doc) => {
+      if (!doc) return null;
+      
+      // Finden der Seite und Entfernen des Kommentars
+      const updatedPages = doc.pages.map((page) => {
+        if (page.pageNumber === pageNumber) {
+          return { 
+            ...page, 
+            comments: page.comments.filter(comment => comment.id !== commentId)
+          };
+        }
+        return page;
+      });
+      
+      return {
+        ...doc,
+        pages: updatedPages,
+        modified: true
+      };
+    });
+  }
+  
+  /**
+   * Aktualisiert einen bestehenden Kommentar
+   */
+  static updateComment(pageNumber: number, commentId: string, newText: string): void {
+    currentPdfDocument.update((doc) => {
+      if (!doc) return null;
+      
+      // Finden der Seite und Aktualisieren des Kommentars
+      const updatedPages = doc.pages.map((page) => {
+        if (page.pageNumber === pageNumber) {
+          const updatedComments = page.comments.map(comment => {
+            if (comment.id === commentId) {
+              return { ...comment, text: newText };
+            }
+            return comment;
+          });
+          
+          return { 
+            ...page, 
+            comments: updatedComments
+          };
+        }
+        return page;
+      });
+      
+      return {
+        ...doc,
+        pages: updatedPages,
+        modified: true
+      };
+    });
+  }
+  
+  /**
+   * Gibt alle Kommentare für eine bestimmte Seite zurück
+   */
+  static getComments(pageNumber: number): Comment[] {
+    const doc = get(currentPdfDocument);
+    if (!doc) return [];
+    
+    const page = doc.pages.find(p => p.pageNumber === pageNumber);
+    return page ? page.comments : [];
+  }
+
+  /**
+   * Fügt eine neue leere Seite zum PDF-Dokument hinzu
+   * @param position Optional: Position, an der die Seite eingefügt werden soll (standardmäßig am Ende)
+   */
+  static addNewPage(position?: number): void {
+    currentPdfDocument.update((doc) => {
+      if (!doc) return null;
+      
+      // Parameter validieren
+      const insertPosition = position !== undefined && position >= 0 && position <= doc.pages.length
+        ? position
+        : doc.pages.length;
+      
+      // Standardgröße (A4)
+      const width = 595;
+      const height = 842;
+      
+      // Canvas erstellen (wenn wir im Browser sind)
+      let canvas: HTMLCanvasElement | undefined;
+      
+      if (typeof window !== 'undefined') {
+        canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = width;
+        canvas.height = height;
+        
+        // Weißen Hintergrund zeichnen
+        if (ctx) {
+          ctx.fillStyle = 'white';
+          ctx.fillRect(0, 0, width, height);
+        }
+      }
+      
+      // Neue Seitennummern berechnen
+      const updatedPages = [...doc.pages];
+      const newPage: PDFPage = {
+        pageNumber: insertPosition + 1,
+        textContent: '',
+        width,
+        height,
+        canvas,
+        formatting: { ...defaultFormatting },
+        shapes: [],
+        comments: []
+      };
+      
+      // Seite an der gewünschten Position einfügen
+      updatedPages.splice(insertPosition, 0, newPage);
+      
+      // Seitennummern aktualisieren
+      const reindexedPages = updatedPages.map((page, index) => ({
+        ...page,
+        pageNumber: index + 1
+      }));
+      
+      // Aktualisiertes Dokument zurückgeben
+      return {
+        ...doc,
+        totalPages: reindexedPages.length,
+        pages: reindexedPages,
+        modified: true
+      };
+    });
+  }
+  
+  /**
+   * Löscht eine Seite aus dem PDF-Dokument
+   * @param pageNumber Seitennummer der zu löschenden Seite
+   */
+  static deletePage(pageNumber: number): void {
+    currentPdfDocument.update((doc) => {
+      if (!doc) return null;
+      
+      // Prüfen, ob die Seite existiert
+      const pageIndex = doc.pages.findIndex(page => page.pageNumber === pageNumber);
+      if (pageIndex === -1) return doc;
+      
+      // Sicherstellen, dass mindestens eine Seite im Dokument verbleibt
+      if (doc.pages.length <= 1) {
+        alert('Das Dokument muss mindestens eine Seite enthalten.');
+        return doc;
+      }
+      
+      // Seite entfernen
+      const updatedPages = [...doc.pages];
+      updatedPages.splice(pageIndex, 1);
+      
+      // Seitennummern aktualisieren
+      const reindexedPages = updatedPages.map((page, index) => ({
+        ...page,
+        pageNumber: index + 1
+      }));
+      
+      // Aktualisiertes Dokument zurückgeben
+      return {
+        ...doc,
+        totalPages: reindexedPages.length,
+        pages: reindexedPages,
+        modified: true
+      };
+    });
+  }
+  
+  /**
+   * Verschiebt eine Seite an eine neue Position im Dokument
+   * @param currentPageNumber Aktuelle Seitennummer
+   * @param newPosition Neue Position für die Seite (0-basierter Index)
+   */
+  static movePage(currentPageNumber: number, newPosition: number): void {
+    currentPdfDocument.update((doc) => {
+      if (!doc) return null;
+      
+      // Prüfen, ob die Seite existiert
+      const pageIndex = doc.pages.findIndex(page => page.pageNumber === currentPageNumber);
+      if (pageIndex === -1) return doc;
+      
+      // Sicherstellen, dass die neue Position gültig ist
+      const validNewPosition = Math.max(0, Math.min(doc.pages.length - 1, newPosition));
+      
+      // Wenn die Seite bereits an der gewünschten Position ist
+      if (pageIndex === validNewPosition) return doc;
+      
+      // Seite verschieben
+      const updatedPages = [...doc.pages];
+      const [movedPage] = updatedPages.splice(pageIndex, 1);
+      updatedPages.splice(validNewPosition, 0, movedPage);
+      
+      // Seitennummern aktualisieren
+      const reindexedPages = updatedPages.map((page, index) => ({
+        ...page,
+        pageNumber: index + 1
+      }));
+      
+      // Aktualisiertes Dokument zurückgeben
+      return {
+        ...doc,
+        pages: reindexedPages,
+        modified: true
+      };
+    });
   }
 }
 

@@ -2,9 +2,10 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { PDFService } from '$lib/services/pdfService';
-  import type { PDFPage, TextFormatting, Point } from '$lib/services/pdfService';
-  import { currentDrawingTool, DrawingTool } from '$lib/services/pdfService';
+  import type { PDFPage, TextFormatting, Point, Comment, ShapeElement } from '$lib/services/pdfService';
+  import { currentDrawingTool, DrawingTool, ShapeType } from '$lib/services/pdfService';
   import { DrawingService } from '$lib/services/drawingService';
+  import CommentMarker from './CommentMarker.svelte';
   
   export let page: PDFPage;
   export let scale: number = 1.0;
@@ -24,6 +25,10 @@
   let currentShape: any = null;
   let drawingTool = DrawingTool.NONE;
   
+  // Variablen für Kommentare und Auswahl
+  let editingCommentId: string | null = null;
+  let selectedShape: ShapeElement | null = null;
+
   // Variablen für skalierte Dimensionen
   let scaledWidth = 0;
   let scaledHeight = 0;
@@ -195,10 +200,33 @@
   
   // Event-Handler für Zeichenoperationen
   function handleMouseDown(event: MouseEvent): void {
-    if (drawingTool === DrawingTool.NONE || editable) return;
+    if (editable) return;
+    
+    // Position ermitteln
+    startPoint = getPageCoordinates(event);
+    
+    // Bei Auswahlwerkzeug nach vorhandenen Shapes suchen
+    if (drawingTool === DrawingTool.SELECT) {
+      const shape = DrawingService.findShapeAtPoint(page.pageNumber, startPoint);
+      
+      if (shape) {
+        selectedShape = shape;
+        
+        // Bestätigungsdialog anzeigen und das Element löschen, wenn bestätigt
+        const confirmDelete = confirm(`Möchten Sie dieses Element (${getShapeTypeName(shape.type)}) löschen?`);
+        if (confirmDelete) {
+          DrawingService.removeShape(page.pageNumber, shape.id);
+          selectedShape = null;
+        }
+      }
+      
+      return;
+    }
+    
+    // Keine weiteren Aktionen, wenn kein Zeichenwerkzeug ausgewählt ist
+    if (drawingTool === DrawingTool.NONE) return;
     
     isDrawing = true;
-    startPoint = getPageCoordinates(event);
     
     // Für Text-Elemente brauchen wir einen Prompt
     if (drawingTool === DrawingTool.TEXT) {
@@ -211,6 +239,18 @@
       startPoint = null;
     } else {
       currentShape = DrawingService.createShape(startPoint);
+    }
+  }
+  
+  // Benutzerfreundlichen Namen für Shape-Typen zurückgeben
+  function getShapeTypeName(type: ShapeType): string {
+    switch (type) {
+      case ShapeType.RECTANGLE: return 'Rechteck';
+      case ShapeType.CIRCLE: return 'Kreis';
+      case ShapeType.LINE: return 'Linie';
+      case ShapeType.ARROW: return 'Pfeil';
+      case ShapeType.TEXT: return 'Text';
+      default: return 'Element';
     }
   }
   
@@ -231,8 +271,16 @@
     
     const endPoint = getPageCoordinates(event);
     
+    // Für Kommentare
+    if (drawingTool === DrawingTool.COMMENT) {
+      // Prompt für Kommentartext anzeigen
+      const commentText = prompt('Kommentar eingeben:');
+      if (commentText && commentText.trim()) {
+        PDFService.addComment(page.pageNumber, startPoint, commentText);
+      }
+    }
     // Form nur hinzufügen, wenn ausreichend gezogen wurde
-    if (
+    else if (
       drawingTool !== DrawingTool.TEXT && 
       currentShape &&
       (Math.abs(endPoint.x - startPoint.x) > 5 || Math.abs(endPoint.y - startPoint.y) > 5)
@@ -246,6 +294,21 @@
     startPoint = null;
     currentShape = null;
     renderShapes();
+  }
+  
+  // Handler für Kommentare
+  function handleEditComment(commentId: string): void {
+    const comment = page.comments.find(c => c.id === commentId);
+    if (!comment) return;
+    
+    const newText = prompt('Kommentar bearbeiten:', comment.text);
+    if (newText !== null) {
+      PDFService.updateComment(page.pageNumber, commentId, newText);
+    }
+  }
+  
+  function handleDeleteComment(commentId: string): void {
+    PDFService.removeComment(page.pageNumber, commentId);
   }
 </script>
 
@@ -282,6 +345,18 @@
         width={scaledWidth}
         height={scaledHeight}
       ></canvas>
+    {/if}
+    
+    <!-- Kommentarmarker -->
+    {#if page.comments}
+      {#each page.comments as comment (comment.id)}
+        <CommentMarker 
+          {comment} 
+          {scale} 
+          on:editComment={e => handleEditComment(e.detail)}
+          on:deleteComment={e => handleDeleteComment(e.detail)}
+        />
+      {/each}
     {/if}
     
     <!-- Editierbarer Textbereich -->
@@ -323,7 +398,8 @@
         drawingTool === DrawingTool.CIRCLE ? 'crosshair' : 
         drawingTool === DrawingTool.LINE ? 'crosshair' : 
         drawingTool === DrawingTool.ARROW ? 'crosshair' : 
-        drawingTool === DrawingTool.TEXT ? 'text' : 'default'
+        drawingTool === DrawingTool.TEXT ? 'text' : 
+        drawingTool === DrawingTool.COMMENT ? 'pointer' : 'default'
       }"></div>
     {/if}
   </div>

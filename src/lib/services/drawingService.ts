@@ -105,6 +105,179 @@ export class DrawingService {
       };
     });
   }
+
+  /**
+   * Findet ein Shape an einer bestimmten Position auf einer PDF-Seite
+   * @param pageNumber Die Seitennummer
+   * @param point Die zu prüfende Position
+   * @param tolerance Toleranzbereich in Pixeln
+   * @returns Das gefundene Shape oder null
+   */
+  static findShapeAtPoint(pageNumber: number, point: Point, tolerance: number = 5): ShapeElement | null {
+    const doc = get(currentPdfDocument);
+    if (!doc) return null;
+    
+    const page = doc.pages.find(p => p.pageNumber === pageNumber);
+    if (!page || !page.shapes || page.shapes.length === 0) return null;
+    
+    // Von oben nach unten durch die Shapes gehen, um zuletzt gezeichnete zuerst zu erfassen
+    for (let i = page.shapes.length - 1; i >= 0; i--) {
+      const shape = page.shapes[i];
+      
+      if (this.isPointInShape(point, shape, tolerance)) {
+        return shape;
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Prüft, ob ein Punkt innerhalb eines Shapes liegt
+   * @param point Der zu prüfende Punkt
+   * @param shape Das zu prüfende Shape
+   * @param tolerance Toleranzbereich in Pixeln
+   * @returns true, wenn der Punkt im Shape liegt
+   */
+  private static isPointInShape(point: Point, shape: ShapeElement, tolerance: number = 5): boolean {
+    switch (shape.type) {
+      case ShapeType.RECTANGLE:
+        return this.isPointInRectangle(point, shape, tolerance);
+      case ShapeType.CIRCLE:
+        return this.isPointInCircle(point, shape, tolerance);
+      case ShapeType.LINE:
+        return this.isPointOnLine(point, shape, tolerance);
+      case ShapeType.ARROW:
+        return this.isPointOnLine(point, shape, tolerance);
+      case ShapeType.TEXT:
+        return this.isPointNearTextPosition(point, shape, tolerance);
+      default:
+        return false;
+    }
+  }
+  
+  /**
+   * Prüft, ob ein Punkt innerhalb eines Rechtecks liegt
+   */
+  private static isPointInRectangle(point: Point, shape: ShapeElement, tolerance: number): boolean {
+    if (!shape.endPoint) return false;
+    
+    // Rechteckgrenzen bestimmen (min/max, um negative Breite/Höhe zu berücksichtigen)
+    const minX = Math.min(shape.startPoint.x, shape.endPoint.x) - tolerance;
+    const maxX = Math.max(shape.startPoint.x, shape.endPoint.x) + tolerance;
+    const minY = Math.min(shape.startPoint.y, shape.endPoint.y) - tolerance;
+    const maxY = Math.max(shape.startPoint.y, shape.endPoint.y) + tolerance;
+    
+    // Prüfen, ob der Punkt innerhalb des Rechtecks liegt
+    return point.x >= minX && point.x <= maxX && 
+           point.y >= minY && point.y <= maxY;
+  }
+  
+  /**
+   * Prüft, ob ein Punkt innerhalb eines Kreises liegt
+   */
+  private static isPointInCircle(point: Point, shape: ShapeElement, tolerance: number): boolean {
+    if (!shape.endPoint) return false;
+    
+    // Kreismittelpunkt und Radius berechnen
+    const centerX = (shape.startPoint.x + shape.endPoint.x) / 2;
+    const centerY = (shape.startPoint.y + shape.endPoint.y) / 2;
+    const radiusX = Math.abs(shape.endPoint.x - shape.startPoint.x) / 2;
+    const radiusY = Math.abs(shape.endPoint.y - shape.startPoint.y) / 2;
+    
+    // Abstand zum Mittelpunkt berechnen (unter Berücksichtigung der Ellipsenform)
+    const dx = (point.x - centerX) / (radiusX + tolerance);
+    const dy = (point.y - centerY) / (radiusY + tolerance);
+    
+    // Prüfen, ob der Punkt innerhalb der Ellipse liegt
+    return (dx * dx + dy * dy) <= 1;
+  }
+  
+  /**
+   * Prüft, ob ein Punkt nahe einer Linie liegt
+   */
+  private static isPointOnLine(point: Point, shape: ShapeElement, tolerance: number): boolean {
+    if (!shape.endPoint) return false;
+    
+    // Abstand eines Punktes zu einer Linie berechnen
+    const distance = this.distanceFromPointToLine(
+      point,
+      shape.startPoint,
+      shape.endPoint
+    );
+    
+    // Als "auf der Linie" betrachten, wenn der Abstand kleiner als die Toleranz ist
+    return distance <= tolerance + (shape.lineWidth / 2);
+  }
+  
+  /**
+   * Prüft, ob ein Punkt nahe einer Textposition liegt
+   */
+  private static isPointNearTextPosition(point: Point, shape: ShapeElement, tolerance: number): boolean {
+    // Textgröße abschätzen (Durchschnitt für ein Textfeld)
+    const fontSize = shape.textFormatting?.fontSize || 12;
+    const textLength = (shape.text?.length || 0) * fontSize * 0.6; // Grobe Abschätzung
+    
+    // Rechteckbereich für den Text definieren
+    const textArea = {
+      minX: shape.startPoint.x - tolerance,
+      maxX: shape.startPoint.x + textLength + tolerance,
+      minY: shape.startPoint.y - fontSize - tolerance,
+      maxY: shape.startPoint.y + tolerance
+    };
+    
+    // Prüfen, ob der Punkt innerhalb des Textbereichs liegt
+    return point.x >= textArea.minX && point.x <= textArea.maxX &&
+           point.y >= textArea.minY && point.y <= textArea.maxY;
+  }
+  
+  /**
+   * Berechnet den Abstand eines Punktes zu einer Linie
+   */
+  private static distanceFromPointToLine(point: Point, lineStart: Point, lineEnd: Point): number {
+    // Linienvektor
+    const dx = lineEnd.x - lineStart.x;
+    const dy = lineEnd.y - lineStart.y;
+    
+    // Quadrat der Länge der Linie
+    const lenSq = dx * dx + dy * dy;
+    
+    // Wenn die Linie ein Punkt ist, berechne den euklidischen Abstand
+    if (lenSq === 0) {
+      return Math.sqrt(
+        (point.x - lineStart.x) * (point.x - lineStart.x) +
+        (point.y - lineStart.y) * (point.y - lineStart.y)
+      );
+    }
+    
+    // Berechne den Projektionsfaktor
+    const t = ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / lenSq;
+    
+    if (t < 0) {
+      // Jenseits des lineStart-Punktes
+      return Math.sqrt(
+        (point.x - lineStart.x) * (point.x - lineStart.x) +
+        (point.y - lineStart.y) * (point.y - lineStart.y)
+      );
+    }
+    
+    if (t > 1) {
+      // Jenseits des lineEnd-Punktes
+      return Math.sqrt(
+        (point.x - lineEnd.x) * (point.x - lineEnd.x) +
+        (point.y - lineEnd.y) * (point.y - lineEnd.y)
+      );
+    }
+    
+    // Projektion fällt auf die Linie
+    const projX = lineStart.x + t * dx;
+    const projY = lineStart.y + t * dy;
+    
+    return Math.sqrt(
+      (point.x - projX) * (point.x - projX) +
+      (point.y - projY) * (point.y - projY)
+    );
+  }
   
   /**
    * Erstellt ein neues Shape-Element basierend auf dem aktuellen Zeichenwerkzeug

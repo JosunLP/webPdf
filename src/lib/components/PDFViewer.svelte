@@ -3,6 +3,7 @@
   import type { PDFDocumentInfo, SearchResult } from '$lib/services/pdfService';
   import { PDFService } from '$lib/services/pdfService';
   import PDFPage from './PDFPage.svelte';
+  import PageManager from './pageManagement/PageManager.svelte';
   
   export let document: PDFDocumentInfo;
   
@@ -291,6 +292,16 @@
       {/if}
     </div>
   {/if}
+  
+  <!-- Seitenverwaltung -->
+  <PageManager 
+    pdfDocument={document} 
+    currentPage={currentPage} 
+    onPageChange={(pageNumber) => {
+      currentPage = pageNumber;
+      updateVisiblePages();
+    }}
+  />
   
   <div class="document-container" class:multiple-pages={viewMode === 'multiple'}>
     {#each pagesToShow as page}

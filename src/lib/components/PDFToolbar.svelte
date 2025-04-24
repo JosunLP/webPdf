@@ -114,6 +114,18 @@
   <div class="toolbar-section drawing-tools">
     <button 
       class="toolbar-tool-button" 
+      class:active={drawingTool === DrawingTool.SELECT}
+      on:click={() => toggleDrawingTool(DrawingTool.SELECT)} 
+      disabled={!pdfDocument}
+      title="Auswählen/Löschen"
+      aria-label="Auswählen oder Löschen von Elementen"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+      </svg>
+    </button>
+    <button 
+      class="toolbar-tool-button" 
       class:active={drawingTool === DrawingTool.RECTANGLE}
       on:click={() => toggleDrawingTool(DrawingTool.RECTANGLE)} 
       disabled={!pdfDocument}
@@ -170,6 +182,19 @@
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M7 3v18M17 3v18" />
+      </svg>
+    </button>
+    <!-- Neues Kommentar-Werkzeug -->
+    <button 
+      class="toolbar-tool-button" 
+      class:active={drawingTool === DrawingTool.COMMENT}
+      on:click={() => toggleDrawingTool(DrawingTool.COMMENT)} 
+      disabled={!pdfDocument}
+      title="Kommentar hinzufügen"
+      aria-label="Kommentar hinzufügen"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
       </svg>
     </button>
     
