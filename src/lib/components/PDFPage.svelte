@@ -24,6 +24,10 @@
   let currentShape: any = null;
   let drawingTool = DrawingTool.NONE;
   
+  // Variablen für skalierte Dimensionen
+  let scaledWidth = 0;
+  let scaledHeight = 0;
+  
   // Abonniere das aktuelle Zeichenwerkzeug
   const unsubscribeDrawingTool = browser ? 
     currentDrawingTool.subscribe(value => {

@@ -7,9 +7,11 @@ import {
   currentDrawingTool,
   currentDrawingProperties,
   currentFormatting,
-  defaultFormatting,
-  type TextFormatting
 } from './pdfService';
+
+
+const { get } = await import('svelte/store');
+
 
 /**
  * Service für Zeichenoperationen in PDF-Dateien
@@ -115,20 +117,12 @@ export class DrawingService {
     endPoint?: Point, 
     text?: string
   ): ShapeElement {
-    // Aktuelle Zeicheneigenschaften aus dem Store lesen
-    let tool: DrawingTool = DrawingTool.NONE;
-    let properties = { color: '#000000', lineWidth: 1, filled: false };
-    let formatting: TextFormatting = {...defaultFormatting};
-    
-    // Optimierter Zugriff auf die Stores
-    const unsubDrawingTool = currentDrawingTool.subscribe(value => { tool = value; });
-    const unsubDrawingProps = currentDrawingProperties.subscribe(value => { properties = value; });
-    const unsubFormatting = currentFormatting.subscribe(value => { formatting = value; });
-    
-    // Store-Abonnements sofort beenden
-    unsubDrawingTool();
-    unsubDrawingProps();
-    unsubFormatting();
+    // Import 'get' for direct store access
+
+    // Aktuelle Zeicheneigenschaften aus dem Store lesen using get
+    const tool = get(currentDrawingTool);
+    const properties = get(currentDrawingProperties);
+    const formatting = get(currentFormatting);
     
     // Eindeutige ID generieren (verwendet substring statt veraltetem substr)
     const id = `shape-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;

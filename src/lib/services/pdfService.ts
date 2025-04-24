@@ -115,11 +115,34 @@ export const currentDrawingProperties: Writable<{
 // Hilfsfunktion zum Laden von PDF.js nur im Browser
 const loadPdfJs = async () => {
   if (typeof window !== 'undefined' && !pdfjs) {
-    pdfjs = await import('pdfjs-dist');
-    
-    // Importieren des Workers direkt aus dem CDN
-    const PDFJS_WORKER_SRC = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-    pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_SRC;
+    try {
+      // Dynamisches Importieren von pdfjs-dist
+      const pdfJsModule = await import('pdfjs-dist');
+      
+      if (!pdfJsModule) {
+        console.error('PDF.js konnte nicht geladen werden');
+        throw new Error('PDF.js konnte nicht geladen werden');
+      }
+      
+      pdfjs = pdfJsModule as unknown as PDFJSStatic;
+      
+      // Worker-Konfiguration mit Fallback
+      try {
+        // Primär lokalen Worker verwenden (vorher kopiert in static-Ordner)
+        const workerSrc = '/pdf.worker.min.js';
+        console.log('PDF.js Worker-Pfad:', workerSrc);
+        pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+      } catch (workerError) {
+        console.error('Fehler beim Setzen des Worker-Pfads:', workerError);
+        // Bei Fehler versuchen, den CDN-Worker mit aktueller Version zu verwenden
+        const PDFJS_WORKER_SRC = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.1.91/build/pdf.worker.min.mjs';
+        pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_SRC;
+        console.log('CDN PDF.js Worker wird verwendet');
+      }
+    } catch (error) {
+      console.error('Fehler beim Laden von PDF.js:', error);
+      throw error;
+    }
   }
   return pdfjs;
 };
@@ -135,46 +158,290 @@ export class PDFService {
       if (!pdfjs) throw new Error('PDF.js konnte nicht geladen werden.');
       
       const fileArrayBuffer = await file.arrayBuffer();
-      const pdfDoc = await pdfjs.getDocument({ data: fileArrayBuffer }).promise;
+      
+      // Prüfen, ob die Datei gültig ist und Daten enthält
+      if (!fileArrayBuffer || fileArrayBuffer.byteLength === 0) {
+        throw new Error('Die PDF-Datei ist leer oder beschädigt.');
+      }
+      
+      // Timeout für das Laden des Dokuments setzen (30 Sekunden)
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Zeitüberschreitung beim Laden des PDF-Dokuments.')), 30000);
+      });
+      
+      // PDF-Dokument mit Timeout laden
+      const loadPromise = pdfjs.getDocument({ data: fileArrayBuffer }).promise;
+      const pdfDoc = await Promise.race([loadPromise, timeoutPromise]) as PDFDocumentProxy;
+      
+      if (!pdfDoc || !pdfDoc.numPages) {
+        throw new Error('Das PDF-Dokument enthält keine Seiten.');
+      }
       
       const pages: PDFPage[] = [];
       for (let i = 1; i <= pdfDoc.numPages; i++) {
-        const page = await pdfDoc.getPage(i);
-        const viewport = page.getViewport({ scale: 1.0 });
-        const textContent = await page.getTextContent();
-        
-        // Erstellen eines Canvas für die Seite
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-        
-        // Rendern der Seite auf dem Canvas
-        if (context) {
-          await page.render({ canvasContext: context, viewport }).promise;
+        try {
+          const page = await pdfDoc.getPage(i);
+          const viewport = page.getViewport({ scale: 1.0 });
+          
+          // Erstellen eines Canvas für die Seite
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+          
+          // Rendern der Seite auf dem Canvas
+          if (context) {
+            await page.render({ canvasContext: context, viewport }).promise;
+          }
+          
+          // Standardformatierung setzen
+          const pageFormatting = {...defaultFormatting};
+          
+          // Extrahierte Shapes sammeln
+          const shapes: ShapeElement[] = [];
+          
+          // Text aus dem Dokument extrahieren mit verbesserter Fehlerbehandlung und Formatierung
+          let structuredText = '';
+          let textItems: Array<{text: string, x: number, y: number, fontSize?: number, fontFamily?: string, fontWeight?: string, fontStyle?: string}> = [];
+          
+          try {
+            // Verbesserte Textextraktion mit Formatierungsinformationen
+            const textContent = await page.getTextContent();
+            
+            if (textContent && Array.isArray(textContent.items)) {
+              // Durchgehen der Text-Items mit zusätzlichen Style-Informationen
+              textItems = textContent.items
+                .filter((item: any) => item && 'str' in item && typeof item.str === 'string')
+                .map((item: any) => {
+                  // Extrahiere Formatierungsdetails aus dem PDF-Dokument
+                  let fontSize = 12;
+                  let fontFamily = 'Arial';
+                  let fontWeight = 'normal';
+                  let fontStyle = 'normal';
+                  
+                  // Style-Informationen extrahieren, wenn verfügbar
+                  if (item.fontName) {
+                    fontFamily = item.fontName.replace(/[+,]/g, '');
+                    
+                    // Versuchen, Formatierungsinformationen aus dem Font-Namen zu extrahieren
+                    if (fontFamily.toLowerCase().includes('bold')) {
+                      fontWeight = 'bold';
+                    }
+                    
+                    if (fontFamily.toLowerCase().includes('italic') || fontFamily.toLowerCase().includes('oblique')) {
+                      fontStyle = 'italic';
+                    }
+                  }
+                  
+                  // Schriftgröße extrahieren
+                  if (item.transform && Array.isArray(item.transform) && item.transform.length >= 6) {
+                    const scaleFactor = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
+                    fontSize = Math.round(scaleFactor);
+                    
+                    // Realistischeren Wert sicherstellen
+                    if (fontSize < 6) fontSize = 10;
+                    if (fontSize > 72) fontSize = 24;
+                  }
+                  
+                  // Position extrahieren
+                  const x = item.transform ? item.transform[4] : 0;
+                  const y = item.transform ? item.transform[5] : 0;
+                  
+                  return {
+                    text: item.str,
+                    x: x,
+                    y: y,
+                    fontSize,
+                    fontFamily,
+                    fontWeight,
+                    fontStyle
+                  };
+                });
+              
+              // Text nach Position sortieren (von oben nach unten, dann von links nach rechts)
+              textItems.sort((a, b) => {
+                // Toleranz für Zeilengleichheit (10 Pixel)
+                const lineHeightTolerance = 10;
+                const lineDiff = Math.abs(a.y - b.y);
+                
+                if (lineDiff <= lineHeightTolerance) {
+                  // Auf gleicher Zeile, nach X-Position sortieren
+                  return a.x - b.x;
+                }
+                // Nach Y-Position sortieren (von oben nach unten)
+                return b.y - a.y;
+              });
+              
+              // Strings mit Berücksichtigung der Zeilenumbrüche zusammenfügen
+              let currentLine = -1;
+              const lines: string[] = [];
+              let currentLineText = '';
+              const lineHeightTolerance = 10;
+              
+              for (let j = 0; j < textItems.length; j++) {
+                const item = textItems[j];
+                
+                if (j === 0) {
+                  // Erste Zeile
+                  currentLine = item.y;
+                  currentLineText = item.text;
+                } else {
+                  // Neue Zeile erkannt?
+                  if (Math.abs(item.y - currentLine) > lineHeightTolerance) {
+                    lines.push(currentLineText);
+                    currentLineText = item.text;
+                    currentLine = item.y;
+                  } else {
+                    // Zum aktuellen Text hinzufügen, mit Berücksichtigung von Wortabständen
+                    const lastItem = textItems[j - 1];
+                    const spaceNeeded = (item.x - (lastItem.x + lastItem.text.length * (lastItem.fontSize || 12) * 0.6)) > 5;
+                    currentLineText += (spaceNeeded ? ' ' : '') + item.text;
+                  }
+                }
+              }
+              
+              if (currentLineText) {
+                lines.push(currentLineText);
+              }
+              
+              structuredText = lines.join('\n');
+              
+              // Formatierung aus dem ersten Textelement extrahieren (falls vorhanden)
+              if (textItems.length > 0) {
+                const firstItem = textItems[0];
+                pageFormatting.fontSize = firstItem.fontSize || 12;
+                pageFormatting.fontFamily = firstItem.fontFamily || 'Arial';
+                pageFormatting.isBold = firstItem.fontWeight === 'bold';
+                pageFormatting.isItalic = firstItem.fontStyle === 'italic';
+                
+                // Textformatierungen zu Shapes hinzufügen
+                for (const item of textItems) {
+                  // Prüfen, ob die Formatierung vom Standard abweicht
+                  const isFormatted = item.fontWeight === 'bold' || 
+                                     item.fontStyle === 'italic' || 
+                                     item.fontSize !== pageFormatting.fontSize;
+                                     
+                  // Nur spezielle Formatierungen als Text-Shapes speichern
+                  if (isFormatted && item.text.trim()) {
+                    const shapeId = `text-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+                    shapes.push({
+                      id: shapeId,
+                      type: ShapeType.TEXT,
+                      startPoint: { x: item.x, y: viewport.height - item.y },
+                      color: '#000000',
+                      lineWidth: 1,
+                      text: item.text,
+                      textFormatting: {
+                        fontFamily: item.fontFamily || pageFormatting.fontFamily,
+                        fontSize: item.fontSize || pageFormatting.fontSize,
+                        isBold: item.fontWeight === 'bold',
+                        isItalic: item.fontStyle === 'italic',
+                        isUnderline: false
+                      }
+                    });
+                  }
+                }
+              }
+            }
+          } catch (textError) {
+            console.warn(`Konnte Text von Seite ${i} nicht laden:`, textError);
+            structuredText = '';
+          }
+          
+          try {
+            // Extrahieren der Vektorgrafiken und Formen aus dem PDF
+            // Operatoren abrufen (wenn unterstützt)
+            const operatorList = await page.getOperatorList();
+            
+            if (operatorList && operatorList.fnArray && operatorList.argsArray) {
+              // Durchsuchen der Operationen nach gängigen Zeichenbefehlen
+              for (let j = 0; j < operatorList.fnArray.length; j++) {
+                const opId = operatorList.fnArray[j];
+                const args = operatorList.argsArray[j];
+                
+                // Prüfen, welcher Operator vorliegt und entsprechende Shape erstellen
+                // Linien extrahieren
+                if (opId === 1 /* OP_moveto */ && j < operatorList.fnArray.length - 2) {
+                  const nextOpId = operatorList.fnArray[j+1];
+                  const nextNextOpId = operatorList.fnArray[j+2];
+                  
+                  // Linie gefunden (moveTo + lineTo + stroke)
+                  if (nextOpId === 2 /* OP_lineto */ && nextNextOpId === 33 /* OP_stroke */) {
+                    const moveArgs = operatorList.argsArray[j];
+                    const lineArgs = operatorList.argsArray[j+1];
+                    
+                    if (moveArgs && lineArgs && moveArgs.length >= 2 && lineArgs.length >= 2) {
+                      const lineId = `line-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+                      shapes.push({
+                        id: lineId,
+                        type: ShapeType.LINE,
+                        startPoint: { 
+                          x: moveArgs[0], 
+                          y: viewport.height - moveArgs[1] 
+                        },
+                        endPoint: { 
+                          x: lineArgs[0], 
+                          y: viewport.height - lineArgs[1]
+                        },
+                        color: '#000000',
+                        lineWidth: 2
+                      });
+                    }
+                  }
+                }
+                
+                // Rechtecke extrahieren
+                if (opId === 84 /* OP_rectangle */ && args && args.length >= 4) {
+                  const rectId = `rect-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+                  
+                  // Rechteck mit richtig orientierten Koordinaten erstellen
+                  shapes.push({
+                    id: rectId,
+                    type: ShapeType.RECTANGLE,
+                    startPoint: { 
+                      x: args[0], 
+                      y: viewport.height - args[1] - args[3] // y-Koordinate invertieren und Höhe abziehen
+                    },
+                    endPoint: { 
+                      x: args[0] + args[2], 
+                      y: viewport.height - args[1]
+                    },
+                    color: '#000000',
+                    lineWidth: 1,
+                    filled: false
+                  });
+                }
+              }
+            }
+            
+            // Versuch, kreisähnliche Objekte zu erkennen
+            // Dies ist komplexer und erfordert möglicherweise eine tiefere Analyse des PDF-Inhalts...
+            // Hier könnte zusätzliche Implementierung erfolgen
+          } catch (operatorError) {
+            console.warn(`Konnte Vektorgrafiken von Seite ${i} nicht extrahieren:`, operatorError);
+          }
+          
+          pages.push({
+            pageNumber: i,
+            textContent: structuredText,
+            width: viewport.width,
+            height: viewport.height,
+            canvas,
+            formatting: pageFormatting,
+            shapes: shapes // Extrahierte Shapes hinzufügen
+          });
+        } catch (pageError) {
+          console.error(`Fehler beim Laden der Seite ${i}:`, pageError);
+          // Füge eine Platzhalterseite hinzu, anstatt komplett zu fehlschlagen
+          pages.push({
+            pageNumber: i,
+            textContent: `[Fehler beim Laden der Seite ${i}]`,
+            width: 595, // Standard A4 Breite
+            height: 842, // Standard A4 Höhe
+            formatting: {...defaultFormatting},
+            shapes: []
+          });
         }
-        
-        // Text aus dem Dokument extrahieren
-        // Define a specific interface for PDF.js text items
-        interface PDFTextItem {
-          str?: string;
-          [key: string]: unknown;  // Allow other properties
-        }
-        
-        const textItems = textContent.items
-          .filter((item: PDFTextItem) => 'str' in item)
-          .map((item: PDFTextItem) => item.str)
-          .join(' ');
-        
-        pages.push({
-          pageNumber: i,
-          textContent: textItems,
-          width: viewport.width,
-          height: viewport.height,
-          canvas,
-          formatting: {...defaultFormatting},
-          shapes: [] // Initialisiere leeres Array für grafische Elemente
-        });
       }
       
       const documentInfo: PDFDocumentInfo = {
@@ -191,7 +458,7 @@ export class PDFService {
       return documentInfo;
     } catch (error) {
       console.error('Fehler beim Laden des PDF-Dokuments:', error);
-      throw error;
+      throw new Error('Die PDF-Datei konnte nicht geladen werden. Bitte versuchen Sie es mit einer anderen Datei.');
     }
   }
 
@@ -209,26 +476,74 @@ export class PDFService {
       const pdfDoc = await PDFDocument.create();
       const page = pdfDoc.addPage([595, 842]); // A4 Größe
       
-      // Fügen Sie eine Überschrift hinzu
-      const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      page.setFont(helveticaFont);
-      page.setFontSize(24);
-      page.drawText('Neues Dokument', {
-        x: 50,
-        y: 800,
-        color: rgb(0, 0, 0),
-      });
-      
-      // Konvertieren zu ArrayBuffer
-      const pdfBytes = await pdfDoc.save();
-      const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
-      const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
-      
-      // Laden des gerade erstellten PDF-Dokuments
-      return await this.loadPdfFromFile(pdfFile);
+      try {
+        // Fügen Sie eine Überschrift hinzu
+        const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        page.setFont(helveticaFont);
+        page.setFontSize(24);
+        page.drawText('Neues Dokument', {
+          x: 50,
+          y: 800,
+          color: rgb(0, 0, 0),
+        });
+        
+        // Konvertieren zu ArrayBuffer
+        const pdfBytes = await pdfDoc.save();
+        const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+        
+        // Laden des gerade erstellten PDF-Dokuments mit verbesserter Fehlerbehandlung
+        try {
+          return await this.loadPdfFromFile(pdfFile);
+        } catch (loadError) {
+          console.error('Fehler beim Laden des neu erstellten PDFs:', loadError);
+          
+          // Erstelle ein einfaches Dokument mit Canvas anstatt zu versuchen, es zu laden
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          canvas.width = 595;
+          canvas.height = 842;
+          
+          if (ctx) {
+            // Weißen Hintergrund zeichnen
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Überschrift zeichnen
+            ctx.fillStyle = 'black';
+            ctx.font = '24px Helvetica';
+            ctx.fillText('Neues Dokument', 50, 50);
+          }
+          
+          // Manuelles Erstellen des Dokument-Objekts
+          const documentInfo: PDFDocumentInfo = {
+            fileName: fileName,
+            totalPages: 1,
+            pages: [{
+              pageNumber: 1,
+              textContent: 'Neues Dokument',
+              width: 595,
+              height: 842,
+              canvas: canvas,
+              formatting: {...defaultFormatting},
+              shapes: []
+            }],
+            modified: true,
+            currentFormatting: {...defaultFormatting}
+          };
+          
+          // Store aktualisieren
+          currentPdfDocument.set(documentInfo);
+          
+          return documentInfo;
+        }
+      } catch (renderError) {
+        console.error('Fehler beim Rendern des PDF-Dokuments:', renderError);
+        throw new Error('Fehler beim Erstellen des PDF-Dokuments. Bitte versuchen Sie es erneut.');
+      }
     } catch (error) {
       console.error('Fehler beim Erstellen des neuen PDF-Dokuments:', error);
-      throw error;
+      throw new Error('Fehler beim Erstellen des PDF-Dokuments. Bitte versuchen Sie es erneut.');
     }
   }
 
