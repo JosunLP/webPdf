@@ -1,9 +1,16 @@
 import { PDFDocument, rgb, StandardFonts, LineCapStyle } from 'pdf-lib';
-import { writable, type Writable } from 'svelte/store';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { writable, type Writable, get } from 'svelte/store';
+
+// Define interface for PDF.js
+interface PDFJSStatic {
+  getDocument(params: { data: ArrayBuffer }): { promise: Promise<PDFDocumentProxy> };
+  GlobalWorkerOptions: { workerSrc: string };
+}
 
 // PDF.js nur im Browser importieren
 // Verhindern von serverseitigem Import, der den DOMMatrix-Fehler verursacht
-let pdfjs: any = null;
+let pdfjs: PDFJSStatic | null = null;
 
 // Interface für Textformatierungen
 export interface TextFormatting {
@@ -148,9 +155,15 @@ export class PDFService {
         }
         
         // Text aus dem Dokument extrahieren
+        // Define a specific interface for PDF.js text items
+        interface PDFTextItem {
+          str?: string;
+          [key: string]: unknown;  // Allow other properties
+        }
+        
         const textItems = textContent.items
-          .filter((item: any) => 'str' in item)
-          .map((item: any) => item.str)
+          .filter((item: PDFTextItem) => 'str' in item)
+          .map((item: PDFTextItem) => item.str)
           .join(' ');
         
         pages.push({
@@ -319,16 +332,78 @@ export class PDFService {
                 lineCap: LineCapStyle.Round
               });
               break;
+            case ShapeType.ARROW:
+              // Linie zeichnen
+              newPage.drawLine({
+                start: shape.startPoint,
+                end: shape.endPoint || shape.startPoint,
+                thickness: shape.lineWidth,
+                color: rgb(...hexToRgb(shape.color)),
+                lineCap: LineCapStyle.Round
+              });
+              
+              // Pfeilspitze zeichnen
+              if (shape.endPoint) {
+                const angle = Math.atan2(
+                  shape.endPoint.y - shape.startPoint.y, 
+                  shape.endPoint.x - shape.startPoint.x
+                );
+                const headSize = 15; // Größe der Pfeilspitze
+                
+                // Punkte für das Dreieck der Pfeilspitze berechnen
+                const p1 = shape.endPoint;
+                const p2 = {
+                  x: shape.endPoint.x - headSize * Math.cos(angle - Math.PI / 6),
+                  y: shape.endPoint.y - headSize * Math.sin(angle - Math.PI / 6)
+                };
+                const p3 = {
+                  x: shape.endPoint.x - headSize * Math.cos(angle + Math.PI / 6),
+                  y: shape.endPoint.y - headSize * Math.sin(angle + Math.PI / 6)
+                };
+                
+                // Dreieck für die Pfeilspitze zeichnen mit SVG Path
+                const trianglePath = `M ${p1.x},${p1.y} L ${p2.x},${p2.y} L ${p3.x},${p3.y} Z`;
+                newPage.drawSvgPath(trianglePath, {
+                  color: rgb(...hexToRgb(shape.color)),
+                  borderColor: rgb(...hexToRgb(shape.color)),
+                  borderWidth: 0,
+                  opacity: 1
+                });
+              }
+              break;
             case ShapeType.TEXT:
               if (shape.text) {
-                const textFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+                // Wähle die passende Schriftart basierend auf den Formatierungseigenschaften
+                let textFont = helveticaFont;
+                const formatting = shape.textFormatting || defaultFormatting;
+                
+                if (formatting.isBold && formatting.isItalic) {
+                  textFont = helveticaBoldOblique;
+                } else if (formatting.isBold) {
+                  textFont = helveticaBoldFont;
+                } else if (formatting.isItalic) {
+                  textFont = helveticaOblique;
+                }
+                
+                // Text zeichnen mit korrekter Formatierung
                 newPage.drawText(shape.text, {
                   x: shape.startPoint.x,
                   y: shape.startPoint.y,
-                  size: shape.textFormatting?.fontSize || 12,
+                  size: formatting.fontSize,
                   font: textFont,
                   color: rgb(...hexToRgb(shape.color))
                 });
+                
+                // Unterstreichung hinzufügen, falls erforderlich
+                if (formatting.isUnderline) {
+                  const textWidth = textFont.widthOfTextAtSize(shape.text, formatting.fontSize);
+                  newPage.drawLine({
+                    start: { x: shape.startPoint.x, y: shape.startPoint.y - formatting.fontSize/8 },
+                    end: { x: shape.startPoint.x + textWidth, y: shape.startPoint.y - formatting.fontSize/8 },
+                    thickness: formatting.fontSize / 20,
+                    color: rgb(...hexToRgb(shape.color))
+                  });
+                }
               }
               break;
           }
@@ -424,12 +499,9 @@ export class PDFService {
    */
   static searchText(searchTerm: string): SearchResult[] {
     const results: SearchResult[] = [];
-    let doc: PDFDocumentInfo | null = null;
     
-    // Aktuellen Dokumentstatus einmalig lesen
-    currentPdfDocument.subscribe(value => {
-      doc = value;
-    })();
+    // Aktuellen Dokumentstatus mit get-Funktion holen
+    const doc = get(currentPdfDocument);
     
     if (!doc || !searchTerm.trim()) {
       return results;

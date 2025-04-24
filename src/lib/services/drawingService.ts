@@ -5,7 +5,10 @@ import {
   currentPdfDocument, 
   DrawingTool, 
   currentDrawingTool,
-  currentDrawingProperties
+  currentDrawingProperties,
+  currentFormatting,
+  defaultFormatting,
+  type TextFormatting
 } from './pdfService';
 
 /**
@@ -115,13 +118,20 @@ export class DrawingService {
     // Aktuelle Zeicheneigenschaften aus dem Store lesen
     let tool: DrawingTool = DrawingTool.NONE;
     let properties = { color: '#000000', lineWidth: 1, filled: false };
+    let formatting: TextFormatting = {...defaultFormatting};
     
-    // Einmalig aus den Stores lesen
-    currentDrawingTool.subscribe(value => { tool = value; })();
-    currentDrawingProperties.subscribe(value => { properties = value; })();
+    // Optimierter Zugriff auf die Stores
+    const unsubDrawingTool = currentDrawingTool.subscribe(value => { tool = value; });
+    const unsubDrawingProps = currentDrawingProperties.subscribe(value => { properties = value; });
+    const unsubFormatting = currentFormatting.subscribe(value => { formatting = value; });
     
-    // Eindeutige ID generieren
-    const id = `shape-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Store-Abonnements sofort beenden
+    unsubDrawingTool();
+    unsubDrawingProps();
+    unsubFormatting();
+    
+    // Eindeutige ID generieren (verwendet substring statt veraltetem substr)
+    const id = `shape-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
     
     // Shape-Typ aus dem aktuellen Werkzeug ableiten
     let shapeType: ShapeType;
@@ -143,7 +153,9 @@ export class DrawingService {
       color: properties.color,
       lineWidth: properties.lineWidth,
       filled: properties.filled,
-      text: text
+      text: text,
+      // Textformatierung für Text-Elemente hinzufügen
+      textFormatting: shapeType === ShapeType.TEXT ? {...formatting} : undefined
     };
   }
   
@@ -212,7 +224,7 @@ export class DrawingService {
           }
           break;
           
-        case ShapeType.CIRCLE:
+        case ShapeType.CIRCLE: {
           ctx.beginPath();
           const radiusX = Math.abs(end.x - start.x) / 2;
           const radiusY = Math.abs(end.y - start.y) / 2;
@@ -245,6 +257,7 @@ export class DrawingService {
             ctx.fill();
           }
           break;
+        }
           
         case ShapeType.LINE:
           ctx.beginPath();
@@ -253,7 +266,7 @@ export class DrawingService {
           ctx.stroke();
           break;
           
-        case ShapeType.ARROW:
+        case ShapeType.ARROW: {
           // Linie zeichnen
           const angle = Math.atan2(end.y - start.y, end.x - start.x);
           const headSize = 15 * scale; // Größe der Pfeilspitze
@@ -277,6 +290,7 @@ export class DrawingService {
           ctx.closePath();
           ctx.fill();
           break;
+        }
           
         case ShapeType.TEXT:
           if (shape.text) {

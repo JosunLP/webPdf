@@ -219,36 +219,35 @@
         class:active={viewMode === 'single'}
         on:click={() => viewMode === 'multiple' && toggleViewMode()}
         title="Einzelseiten-Ansicht"
+        aria-label="Einzelseiten-Ansicht"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v12a2 2 0 01-2 2z" />
         </svg>
       </button>
-      
       <button 
         class="view-mode-button"
         class:active={viewMode === 'multiple'}
         on:click={() => viewMode === 'single' && toggleViewMode()}
         title="Mehrseiten-Ansicht"
+        aria-label="Mehrseiten-Ansicht"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
         </svg>
       </button>
     </div>
-    
-    <div class="search-toggle">
       <button 
         class="toolbar-button" 
         on:click={toggleSearchBox} 
         title="Suchen (Strg+F)"
         class:active={showSearchBox}
+        aria-label="Suchen (Strg+F)"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
       </button>
-    </div>
     
     <div class="zoom-controls">
       <button class="zoom-button" on:click={zoomOut} title="Verkleinern">-</button>
@@ -385,29 +384,27 @@
       }
     }
     
-    .search-toggle {
-      .toolbar-button {
-        background: none;
-        border: 1px solid #d1d5db;
-        border-radius: 0.25rem;
-        padding: 0.25rem;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        
-        &:hover {
-          background-color: #f3f4f6;
-        }
-        
-        &.active {
-          background-color: #e5e7eb;
-          border-color: #9ca3af;
-        }
-        
-        svg {
-          color: #4b5563;
-        }
+    .toolbar-button {
+      background: none;
+      border: 1px solid #d1d5db;
+      border-radius: 0.25rem;
+      padding: 0.25rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      
+      &:hover {
+        background-color: #f3f4f6;
+      }
+      
+      &.active {
+        background-color: #e5e7eb;
+        border-color: #9ca3af;
+      }
+      
+      svg {
+        color: #4b5563;
       }
     }
     

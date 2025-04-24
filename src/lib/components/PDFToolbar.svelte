@@ -118,54 +118,55 @@
       on:click={() => toggleDrawingTool(DrawingTool.RECTANGLE)} 
       disabled={!pdfDocument}
       title="Rechteck zeichnen"
+      aria-label="Rechteck zeichnen"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <rect x="4" y="4" width="16" height="16" stroke-width="2" />
       </svg>
     </button>
-    
     <button 
       class="toolbar-tool-button" 
       class:active={drawingTool === DrawingTool.CIRCLE}
       on:click={() => toggleDrawingTool(DrawingTool.CIRCLE)} 
       disabled={!pdfDocument}
       title="Kreis zeichnen"
+      aria-label="Kreis zeichnen"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <circle cx="12" cy="12" r="9" stroke-width="2" />
       </svg>
     </button>
-    
     <button 
       class="toolbar-tool-button" 
       class:active={drawingTool === DrawingTool.LINE}
       on:click={() => toggleDrawingTool(DrawingTool.LINE)} 
       disabled={!pdfDocument}
       title="Linie zeichnen"
+      aria-label="Linie zeichnen"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <line x1="4" y1="20" x2="20" y2="4" stroke-width="2" />
       </svg>
     </button>
-    
     <button 
       class="toolbar-tool-button" 
       class:active={drawingTool === DrawingTool.ARROW}
       on:click={() => toggleDrawingTool(DrawingTool.ARROW)} 
       disabled={!pdfDocument}
       title="Pfeil zeichnen"
+      aria-label="Pfeil zeichnen"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
       </svg>
     </button>
-    
     <button 
       class="toolbar-tool-button" 
       class:active={drawingTool === DrawingTool.TEXT}
       on:click={() => toggleDrawingTool(DrawingTool.TEXT)} 
       disabled={!pdfDocument}
       title="Text hinzufügen"
+      aria-label="Text hinzufügen"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M7 3v18M17 3v18" />
@@ -331,7 +332,7 @@
         color: #4b5563;
         cursor: pointer;
         
-        &:disabled, &.disabled {
+        &:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }
