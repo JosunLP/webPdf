@@ -1,5 +1,5 @@
 import { PDFDocument, rgb, StandardFonts, LineCapStyle } from 'pdf-lib';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
+import type { PDFDocumentProxy, TextItem } from 'pdfjs-dist/types/src/display/api'; // Import TextItem
 import { writable, type Writable, get } from 'svelte/store';
 
 // Define interface for PDF.js
@@ -211,8 +211,13 @@ export class PDFService {
             if (textContent && Array.isArray(textContent.items)) {
               // Durchgehen der Text-Items mit zusätzlichen Style-Informationen
               textItems = textContent.items
-                .filter((item: any) => item && 'str' in item && typeof item.str === 'string')
-                .map((item: any) => {
+                .filter((item: unknown): item is TextItem =>
+                  item !== null &&
+                  typeof item === 'object' &&
+                  'str' in item &&
+                  typeof (item as { str: unknown }).str === 'string'
+                )
+                .map((item: TextItem) => {
                   // Extrahiere Formatierungsdetails aus dem PDF-Dokument
                   let fontSize = 12;
                   let fontFamily = 'Arial';
