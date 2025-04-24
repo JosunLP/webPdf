@@ -31,6 +31,13 @@
   let isDraggingShape = false;
   let dragOffset = { x: 0, y: 0 };
 
+  // Variablen für Größenänderung
+  let isResizing = false;
+  let resizeHandle: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight' | null = null;
+  let resizeStartPoint: Point | null = null;
+  let resizeShapeId: string | null = null;
+  let shiftKeyPressed = false; // Für Beibehaltung des Seitenverhältnisses
+
   // Variablen für skalierte Dimensionen
   let scaledWidth = 0;
   let scaledHeight = 0;
@@ -48,10 +55,17 @@
         drawingCtx = drawingCanvas.getContext('2d');
         renderShapes();
       }
+      
+      // Event-Listener für Tastaturereignisse (global)
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
     }
     
     return () => {
       unsubscribeDrawingTool();
+      // Event-Listener entfernen
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
     };
   });
   
@@ -213,6 +227,20 @@
       
       if (shape) {
         selectedShape = shape;
+        
+        // Prüfen, ob auf ein Resize-Handle geklickt wurde
+        if (shape.endPoint) {
+          resizeHandle = DrawingService.getResizeHandle(startPoint, shape);
+          
+          if (resizeHandle) {
+            isResizing = true;
+            resizeStartPoint = startPoint;
+            resizeShapeId = shape.id;
+            return;
+          }
+        }
+        
+        // Wenn kein Resize-Handle angeklickt wurde, als Drag behandeln
         isDraggingShape = true;
         dragOffset = {
           x: startPoint.x - shape.startPoint.x,
@@ -255,6 +283,52 @@
   }
   
   function handleMouseMove(event: MouseEvent): void {
+    if (isResizing && resizeStartPoint && resizeShapeId && resizeHandle) {
+      const currentPoint = getPageCoordinates(event);
+      const shape = page.shapes.find(s => s.id === resizeShapeId);
+      
+      if (shape && shape.endPoint) {
+        // Berechne den neuen Endpunkt basierend auf dem Resize-Handle
+        let newEndPoint: Point;
+        
+        // Je nach angeklicktem Handle unterschiedliche Punkte anpassen
+        switch (resizeHandle) {
+          case 'topLeft':
+            newEndPoint = {
+              x: currentPoint.x,
+              y: currentPoint.y
+            };
+            break;
+          case 'topRight':
+            newEndPoint = {
+              x: currentPoint.x,
+              y: shape.endPoint.y
+            };
+            break;
+          case 'bottomLeft':
+            newEndPoint = {
+              x: shape.endPoint.x,
+              y: currentPoint.y
+            };
+            break;
+          case 'bottomRight':
+            newEndPoint = currentPoint;
+            break;
+          default:
+            newEndPoint = currentPoint;
+        }
+        
+        // Klonen des aktuellen Shapes und Anpassen der Größe für die Vorschau
+        const tempShape = { ...shape };
+        tempShape.endPoint = newEndPoint;
+        
+        // Vorschau-Shape anzeigen
+        selectedShape = tempShape;
+        renderShapes();
+      }
+      return;
+    }
+    
     if (isDraggingShape && selectedShape) {
       const currentPoint = getPageCoordinates(event);
       
@@ -301,6 +375,27 @@
   }
   
   function handleMouseUp(event: MouseEvent): void {
+    if (isResizing && resizeShapeId && selectedShape?.endPoint) {
+      // Größenänderung abschließen und speichern
+      const currentPoint = getPageCoordinates(event);
+      
+      // Resize-Operation mit oder ohne Seitenverhältnisbeibehaltung durchführen
+      DrawingService.resizeShape(
+        page.pageNumber, 
+        resizeShapeId, 
+        selectedShape.endPoint, 
+        shiftKeyPressed // Shift-Key bestimmt, ob das Seitenverhältnis beibehalten werden soll
+      );
+      
+      // Resize-Status zurücksetzen
+      isResizing = false;
+      resizeHandle = null;
+      resizeStartPoint = null;
+      resizeShapeId = null;
+      selectedShape = null;
+      return;
+    }
+    
     if (isDraggingShape && selectedShape) {
       // Shape-Position aktualisieren, wenn es verschoben wurde
       const currentPoint = getPageCoordinates(event);
@@ -366,6 +461,19 @@
   function handleDeleteComment(commentId: string): void {
     PDFService.removeComment(page.pageNumber, commentId);
   }
+  
+  // Tastendruck-Handler für Modifier-Tasten (z.B. Shift für proportionale Größenänderung)
+  function handleKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Shift') {
+      shiftKeyPressed = true;
+    }
+  }
+  
+  function handleKeyUp(event: KeyboardEvent): void {
+    if (event.key === 'Shift') {
+      shiftKeyPressed = false;
+    }
+  }
 </script>
 
 <div class="pdf-page-container">
@@ -414,6 +522,39 @@
           on:deleteComment={e => handleDeleteComment(e.detail)}
         />
       {/each}
+    {/if}
+    
+    <!-- Resize-Handles für ausgewählte Shapes -->
+    {#if selectedShape && selectedShape.endPoint && drawingTool === DrawingTool.SELECT && !isResizing && !isDraggingShape}
+      <!-- Berechne die Positionen für die Handle-Punkte -->
+      {@const minX = Math.min(selectedShape.startPoint.x, selectedShape.endPoint.x) * scale}
+      {@const maxX = Math.max(selectedShape.startPoint.x, selectedShape.endPoint.x) * scale}
+      {@const minY = Math.min(selectedShape.startPoint.y, selectedShape.endPoint.y) * scale}
+      {@const maxY = Math.max(selectedShape.startPoint.y, selectedShape.endPoint.y) * scale}
+
+      <!-- Handle für Top-Left -->
+      <div 
+        class="resize-handle top-left"
+        style="left: {minX - 5}px; top: {minY - 5}px;"
+      ></div>
+      
+      <!-- Handle für Top-Right -->
+      <div 
+        class="resize-handle top-right"
+        style="left: {maxX - 5}px; top: {minY - 5}px;"
+      ></div>
+      
+      <!-- Handle für Bottom-Left -->
+      <div 
+        class="resize-handle bottom-left"
+        style="left: {minX - 5}px; top: {maxY - 5}px;"
+      ></div>
+      
+      <!-- Handle für Bottom-Right -->
+      <div 
+        class="resize-handle bottom-right"
+        style="left: {maxX - 5}px; top: {maxY - 5}px;"
+      ></div>
     {/if}
     
     <!-- Editierbarer Textbereich -->
@@ -587,6 +728,34 @@
           }
         }
       }
+    }
+  }
+  
+  .resize-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background-color: #3b82f6;
+    border: 2px solid white;
+    border-radius: 50%;
+    z-index: 50;
+    cursor: pointer;
+    box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+    
+    &.top-left {
+      cursor: nwse-resize;
+    }
+    
+    &.top-right {
+      cursor: nesw-resize;
+    }
+    
+    &.bottom-left {
+      cursor: nesw-resize;
+    }
+    
+    &.bottom-right {
+      cursor: nwse-resize;
     }
   }
 </style>

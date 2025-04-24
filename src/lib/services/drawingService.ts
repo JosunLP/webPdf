@@ -145,6 +145,100 @@ export class DrawingService {
   }
 
   /**
+   * Ändert die Größe eines grafischen Elements
+   * @param pageNumber Die Seitennummer
+   * @param shapeId Die ID des Elements, dessen Größe geändert werden soll
+   * @param newEndPoint Der neue Endpunkt (bestimmt die neue Größe)
+   * @param maintainAspectRatio Soll das Seitenverhältnis beibehalten werden? (optional)
+   */
+  static resizeShape(pageNumber: number, shapeId: string, newEndPoint: Point, maintainAspectRatio = false): void {
+    const doc = get(currentPdfDocument);
+    if (!doc) return;
+    
+    const page = doc.pages.find(p => p.pageNumber === pageNumber);
+    if (!page) return;
+    
+    const shape = page.shapes.find(s => s.id === shapeId);
+    if (!shape || !shape.endPoint) return;
+    
+    // Erstellung einer Kopie des Shapes mit aktualisierter Größe
+    const resizedShape = { ...shape };
+    
+    if (maintainAspectRatio && shape.type !== ShapeType.LINE && shape.type !== ShapeType.ARROW) {
+      // Berechnung des ursprünglichen Seitenverhältnisses
+      const originalWidth = Math.abs(shape.endPoint.x - shape.startPoint.x);
+      const originalHeight = Math.abs(shape.endPoint.y - shape.startPoint.y);
+      const aspectRatio = originalWidth / originalHeight;
+      
+      // Berechnung der neuen Breite und Höhe
+      let newWidth = Math.abs(newEndPoint.x - shape.startPoint.x);
+      let newHeight = Math.abs(newEndPoint.y - shape.startPoint.y);
+      
+      // Anpassung der Werte, um das Seitenverhältnis beizubehalten
+      if (newWidth / newHeight > aspectRatio) {
+        newWidth = newHeight * aspectRatio;
+      } else {
+        newHeight = newWidth / aspectRatio;
+      }
+      
+      // Berechnung des neuen Endpunkts unter Berücksichtigung der Richtung
+      const signX = newEndPoint.x >= shape.startPoint.x ? 1 : -1;
+      const signY = newEndPoint.y >= shape.startPoint.y ? 1 : -1;
+      
+      resizedShape.endPoint = {
+        x: shape.startPoint.x + (newWidth * signX),
+        y: shape.startPoint.y + (newHeight * signY)
+      };
+    } else {
+      // Ohne Beibehaltung des Seitenverhältnisses - direkte Verwendung des neuen Endpunkts
+      resizedShape.endPoint = newEndPoint;
+    }
+    
+    // Shape aktualisieren
+    this.updateShape(pageNumber, resizedShape);
+  }
+
+  /**
+   * Prüft, ob ein Punkt auf einem Größenänderungs-Handle liegt
+   * @param point Der zu prüfende Punkt
+   * @param shape Das zu prüfende Shape
+   * @param tolerance Toleranzbereich in Pixeln
+   * @returns Position des Handles oder null
+   */
+  static getResizeHandle(point: Point, shape: ShapeElement, tolerance: number = 10): 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight' | null {
+    if (!shape.endPoint) return null;
+    
+    // Berechne die Positionen der vier Eckpunkte
+    const minX = Math.min(shape.startPoint.x, shape.endPoint.x);
+    const maxX = Math.max(shape.startPoint.x, shape.endPoint.x);
+    const minY = Math.min(shape.startPoint.y, shape.endPoint.y);
+    const maxY = Math.max(shape.startPoint.y, shape.endPoint.y);
+    
+    // Prüfe jedes Handle
+    // oben links
+    if (Math.abs(point.x - minX) <= tolerance && Math.abs(point.y - minY) <= tolerance) {
+      return 'topLeft';
+    }
+    
+    // oben rechts
+    if (Math.abs(point.x - maxX) <= tolerance && Math.abs(point.y - minY) <= tolerance) {
+      return 'topRight';
+    }
+    
+    // unten links
+    if (Math.abs(point.x - minX) <= tolerance && Math.abs(point.y - maxY) <= tolerance) {
+      return 'bottomLeft';
+    }
+    
+    // unten rechts
+    if (Math.abs(point.x - maxX) <= tolerance && Math.abs(point.y - maxY) <= tolerance) {
+      return 'bottomRight';
+    }
+    
+    return null;
+  }
+
+  /**
    * Findet ein Shape an einer bestimmten Position auf einer PDF-Seite
    * @param pageNumber Die Seitennummer
    * @param point Die zu prüfende Position
@@ -512,6 +606,79 @@ export class DrawingService {
     
     // Hinweis anzeigen
     alert('Bitte klicken Sie auf die Stelle, an der das Bild eingefügt werden soll.');
+  }
+  
+  /**
+   * Zeigt eine Vorschau eines Bildes an, bevor es eingefügt wird
+   * @param imageFile Die Bilddatei für die Vorschau
+   * @returns Eine Funktion, die die Vorschau entfernt
+   */
+  static showImagePreview(imageFile: File): () => void {
+    // Erstelle ein Vorschau-Container-Element
+    const previewContainer = document.createElement('div');
+    previewContainer.style.position = 'fixed';
+    previewContainer.style.top = '0';
+    previewContainer.style.left = '0';
+    previewContainer.style.pointerEvents = 'none';
+    previewContainer.style.zIndex = '9999';
+    previewContainer.style.border = '2px dashed #3b82f6';
+    previewContainer.style.borderRadius = '4px';
+    previewContainer.style.boxShadow = '0 0 10px rgba(59, 130, 246, 0.5)';
+    previewContainer.style.padding = '4px';
+    previewContainer.style.background = 'rgba(255, 255, 255, 0.7)';
+    
+    // Bildelement erstellen
+    const imagePreview = document.createElement('img');
+    imagePreview.style.maxWidth = '300px';
+    imagePreview.style.maxHeight = '300px';
+    imagePreview.style.objectFit = 'contain';
+    
+    // Schriftart für Info-Text
+    const infoStyle = 'color: #3b82f6; text-align: center; margin-top: 4px; font-size: 12px; font-family: Arial, sans-serif;';
+    
+    // Info-Text zur Anleitung
+    const infoText = document.createElement('div');
+    infoText.innerHTML = 'Klicken Sie, um das Bild einzufügen';
+    infoText.style.cssText = infoStyle;
+    
+    // Dateigröße ermitteln und anzeigen
+    const fileSizeInfo = document.createElement('div');
+    const fileSize = (imageFile.size / 1024).toFixed(1);
+    fileSizeInfo.innerHTML = `Größe: ${fileSize} KB | ${imageFile.type.split('/')[1].toUpperCase()}`;
+    fileSizeInfo.style.cssText = infoStyle;
+    
+    // Base64-Vorschau erstellen
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      if (e.target?.result) {
+        imagePreview.src = e.target.result as string;
+
+        // Bild in Container einfügen
+        previewContainer.appendChild(imagePreview);
+        previewContainer.appendChild(infoText);
+        previewContainer.appendChild(fileSizeInfo);
+        document.body.appendChild(previewContainer);
+      }
+    };
+    reader.readAsDataURL(imageFile);
+
+    // Mausbewegungen verfolgen, um Vorschau zu bewegen
+    const moveHandler = (e: MouseEvent) => {
+      if (previewContainer) {
+        previewContainer.style.transform = `translate(${e.clientX + 20}px, ${e.clientY + 20}px)`;
+      }
+    };
+
+    // Event-Listener hinzufügen
+    document.addEventListener('mousemove', moveHandler);
+    
+    // Funktion zurückgeben, die die Vorschau entfernt und Listeners aufräumt
+    return () => {
+      document.removeEventListener('mousemove', moveHandler);
+      if (previewContainer && previewContainer.parentNode) {
+        previewContainer.parentNode.removeChild(previewContainer);
+      }
+    };
   }
   
   /**

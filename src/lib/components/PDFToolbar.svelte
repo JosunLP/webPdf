@@ -72,7 +72,7 @@
     });
   }
 
-  // Bild einfügen
+  // Bild einfügen mit Vorschau-Funktion
   function handleImageButtonClick(): void {
     const fileInput = document.getElementById('imageFileInput') as HTMLInputElement;
     fileInput.click();
@@ -81,8 +81,57 @@
   function handleImageFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
+    
     if (file && pdfDocument) {
-      DrawingService.addImageToDocument(file);
+      // Zeige eine Bildvorschau an, bevor das Bild eingefügt wird
+      const removePreview = DrawingService.showImagePreview(file);
+      
+      // Werkzeug auf Image setzen
+      DrawingService.setDrawingTool(DrawingTool.IMAGE);
+      
+      // Globalen Event-Listener für Klickereignis auf PDF-Seite hinzufügen
+      const handleClick = (e: MouseEvent) => {
+        // Ziel-Element identifizieren
+        const target = e.target as HTMLElement;
+        const pageElement = target.closest('.pdf-page');
+        
+        if (pageElement) {
+          // Seitennummer extrahieren
+          const pageNumber = parseInt(pageElement.getAttribute('data-page-number') || '1', 10);
+          
+          // Klickposition relativ zur Seite ermitteln
+          const rect = pageElement.getBoundingClientRect();
+          const position = {
+            x: (e.clientX - rect.left) / currentScale,  // Skalierung berücksichtigen
+            y: (e.clientY - rect.top) / currentScale
+          };
+          
+          // Bild zur Seite hinzufügen
+          DrawingService.addImage(pageNumber, position, file);
+          
+          // Event-Listener entfernen und Werkzeug zurücksetzen
+          document.removeEventListener('click', handleClick);
+          DrawingService.setDrawingTool(DrawingTool.NONE);
+          
+          // Vorschau entfernen
+          removePreview();
+        }
+      };
+      
+      // Event-Listener hinzufügen
+      document.addEventListener('click', handleClick, { once: true });
+      
+      // Beim Abbrechen mit ESC-Taste
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          document.removeEventListener('click', handleClick);
+          document.removeEventListener('keydown', handleKeyDown);
+          DrawingService.setDrawingTool(DrawingTool.NONE);
+          removePreview();
+        }
+      };
+      
+      document.addEventListener('keydown', handleKeyDown);
     }
   }
   
