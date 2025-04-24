@@ -41,6 +41,11 @@
   // Variablen für skalierte Dimensionen
   let scaledWidth = 0;
   let scaledHeight = 0;
+
+  // Variablen für Kontextmenü
+  let showContextMenu = false;
+  let contextMenuPosition = { x: 0, y: 0 };
+  let contextMenuShapeId: string | null = null;
   
   // Abonniere das aktuelle Zeichenwerkzeug
   const unsubscribeDrawingTool = browser ? 
@@ -256,12 +261,46 @@
     
     isDrawing = true;
     
-    // Für Text-Elemente brauchen wir einen Prompt
+    // Für Text-Elemente mit verbesserter Vorschau
     if (drawingTool === DrawingTool.TEXT) {
       const text = prompt('Text eingeben:');
-      if (text) {
-        const shape = DrawingService.createShape(startPoint, undefined, text);
-        DrawingService.addShape(page.pageNumber, shape);
+      if (text && text.trim()) {
+        // Vorschau aktivieren
+        const removePreview = DrawingService.showTextPreview(text);
+        
+        // Event-Listener für Klick auf PDF-Seite
+        const handleTextPlacement = (e: MouseEvent) => {
+          // Position ermitteln
+          const point = getPageCoordinates(e);
+          
+          // Text an der gewählten Position hinzufügen
+          const shape = DrawingService.createShape(point, undefined, text);
+          DrawingService.addShape(page.pageNumber, shape);
+          
+          // Vorschau entfernen
+          removePreview();
+          
+          // Event-Listener entfernen
+          document.removeEventListener('click', handleTextPlacement);
+          document.removeEventListener('keydown', handleKeyPress);
+          
+          // Werkzeug zurücksetzen
+          DrawingService.setDrawingTool(DrawingTool.NONE);
+        };
+        
+        // Event-Listener für ESC-Taste zum Abbrechen
+        const handleKeyPress = (e: KeyboardEvent) => {
+          if (e.key === 'Escape') {
+            removePreview();
+            document.removeEventListener('click', handleTextPlacement);
+            document.removeEventListener('keydown', handleKeyPress);
+            DrawingService.setDrawingTool(DrawingTool.NONE);
+          }
+        };
+        
+        // Event-Listener hinzufügen
+        document.addEventListener('click', handleTextPlacement, { once: true });
+        document.addEventListener('keydown', handleKeyPress);
       }
       isDrawing = false;
       startPoint = null;
@@ -474,6 +513,43 @@
       shiftKeyPressed = false;
     }
   }
+  
+  // Kontextmenü für Shapes
+  function showShapeContextMenu(event: MouseEvent, shape: ShapeElement): void {
+    event.preventDefault(); // Standard-Kontextmenü verhindern
+    
+    // Position berechnen (angepasst an die aktuelle Mausposition)
+    contextMenuPosition = { x: event.clientX, y: event.clientY };
+    contextMenuShapeId = shape.id;
+    showContextMenu = true;
+    
+    // Event-Listener hinzufügen, um das Menü zu schließen, wenn irgendwo geklickt wird
+    setTimeout(() => {
+      document.addEventListener('click', closeContextMenu, { once: true });
+    }, 10);
+  }
+  
+  // Kontextmenü schließen
+  function closeContextMenu(): void {
+    showContextMenu = false;
+    contextMenuShapeId = null;
+  }
+  
+  // Ausgewähltes Shape duplizieren
+  function duplicateSelectedShape(): void {
+    if (contextMenuShapeId) {
+      DrawingService.duplicateShape(page.pageNumber, contextMenuShapeId);
+      closeContextMenu();
+    }
+  }
+  
+  // Ausgewähltes Shape löschen
+  function deleteSelectedShape(): void {
+    if (contextMenuShapeId) {
+      DrawingService.removeShape(page.pageNumber, contextMenuShapeId);
+      closeContextMenu();
+    }
+  }
 </script>
 
 <div class="pdf-page-container">
@@ -486,6 +562,15 @@
     on:mousemove={handleMouseMove}
     on:mouseup={handleMouseUp}
     on:mouseleave={handleMouseUp}
+    on:contextmenu={(e) => {
+      if (drawingTool === DrawingTool.SELECT) {
+        const point = getPageCoordinates(e);
+        const shape = DrawingService.findShapeAtPoint(page.pageNumber, point);
+        if (shape) {
+          showShapeContextMenu(e, shape);
+        }
+      }
+    }}
   >
     <!-- Canvas-Anzeige der Seite -->
     {#if page.canvas && browser && !editable}
@@ -599,6 +684,17 @@
         drawingTool === DrawingTool.TEXT ? 'text' : 
         drawingTool === DrawingTool.COMMENT ? 'pointer' : 'default'
       }"></div>
+    {/if}
+    
+    <!-- Kontextmenü für Shapes -->
+    {#if showContextMenu}
+      <div 
+        class="context-menu"
+        style="left: {contextMenuPosition.x}px; top: {contextMenuPosition.y}px;"
+      >
+        <button on:click={duplicateSelectedShape}>Duplizieren</button>
+        <button on:click={deleteSelectedShape}>Löschen</button>
+      </div>
     {/if}
   </div>
 </div>
@@ -756,6 +852,31 @@
     
     &.bottom-right {
       cursor: nwse-resize;
+    }
+  }
+  
+  .context-menu {
+    position: absolute;
+    background-color: white;
+    border: 1px solid #ddd;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    border-radius: 0.25rem;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    padding: 0.5rem;
+    
+    button {
+      background-color: transparent;
+      border: none;
+      padding: 0.5rem 1rem;
+      text-align: left;
+      cursor: pointer;
+      font-size: 0.875rem;
+      
+      &:hover {
+        background-color: #f3f4f6;
+      }
     }
   }
 </style>

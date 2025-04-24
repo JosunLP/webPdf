@@ -682,6 +682,68 @@ export class DrawingService {
   }
   
   /**
+   * Zeigt eine Vorschau eines Textes an, während der Benutzer die Position wählt
+   * @param text Der anzuzeigende Text
+   * @returns Eine Funktion zum Entfernen der Vorschau
+   */
+  static showTextPreview(text: string): () => void {
+    // Aktuelle Formatierungseinstellungen abrufen
+    const formatting = get(currentFormatting);
+
+    // Vorschau-Element erstellen
+    const previewElement = document.createElement('div');
+    previewElement.style.position = 'fixed';
+    previewElement.style.pointerEvents = 'none';
+    previewElement.style.zIndex = '9999';
+    previewElement.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+    previewElement.style.padding = '4px 8px';
+    previewElement.style.border = '2px dashed #3b82f6';
+    previewElement.style.borderRadius = '4px';
+    previewElement.style.maxWidth = '400px';
+    previewElement.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.3)';
+    
+    // Text mit Formatierung hinzufügen
+    const textElement = document.createElement('div');
+    textElement.innerText = text;
+    textElement.style.fontFamily = formatting.fontFamily;
+    textElement.style.fontSize = `${formatting.fontSize}px`;
+    textElement.style.fontWeight = formatting.isBold ? 'bold' : 'normal';
+    textElement.style.fontStyle = formatting.isItalic ? 'italic' : 'normal';
+    textElement.style.textDecoration = formatting.isUnderline ? 'underline' : 'none';
+    textElement.style.color = '#000000';
+    textElement.style.margin = '0';
+    textElement.style.padding = '0';
+    
+    // Info-Text hinzufügen
+    const infoElement = document.createElement('div');
+    infoElement.innerText = 'Klicken Sie, um diesen Text einzufügen';
+    infoElement.style.fontSize = '11px';
+    infoElement.style.color = '#3b82f6';
+    infoElement.style.marginTop = '4px';
+    infoElement.style.fontStyle = 'italic';
+    
+    // Vorschau zusammenbauen und zum DOM hinzufügen
+    previewElement.appendChild(textElement);
+    previewElement.appendChild(infoElement);
+    document.body.appendChild(previewElement);
+    
+    // Mausbewegung verfolgen und Vorschau bewegen
+    const moveHandler = (e: MouseEvent) => {
+      previewElement.style.transform = `translate(${e.clientX + 15}px, ${e.clientY + 15}px)`;
+    };
+    
+    document.addEventListener('mousemove', moveHandler);
+    
+    // Funktion zum Entfernen der Vorschau zurückgeben
+    return () => {
+      document.removeEventListener('mousemove', moveHandler);
+      if (previewElement.parentNode) {
+        previewElement.parentNode.removeChild(previewElement);
+      }
+    };
+  }
+
+  /**
    * Setzt das aktuelle Zeichenwerkzeug
    */
   static setDrawingTool(tool: DrawingTool): void {
@@ -857,5 +919,47 @@ export class DrawingService {
           break;
       }
     });
+  }
+
+  /**
+   * Dupliziert ein grafisches Element und verschiebt es leicht, damit es vom Original unterscheidbar ist
+   * @param pageNumber Die Seitennummer
+   * @param shapeId Die ID des zu duplizierenden Elements
+   */
+  static duplicateShape(pageNumber: number, shapeId: string): void {
+    const doc = get(currentPdfDocument);
+    if (!doc) return;
+    
+    const page = doc.pages.find(p => p.pageNumber === pageNumber);
+    if (!page) return;
+    
+    const sourceShape = page.shapes.find(s => s.id === shapeId);
+    if (!sourceShape) return;
+    
+    // Kopie des Shape-Objekts erstellen
+    const duplicatedShape: ShapeElement = {
+      ...JSON.parse(JSON.stringify(sourceShape)), // Deep copy erstellen
+      id: `shape-${Date.now()}-${Math.random().toString(36).substring(2, 11)}` // Neue ID generieren
+    };
+    
+    // Leicht versetzten, um sichtbar zu machen, dass es ein Duplikat ist
+    const offset = 20; // 20 Pixel Versatz
+    
+    // Startpunkt verschieben
+    duplicatedShape.startPoint = {
+      x: sourceShape.startPoint.x + offset,
+      y: sourceShape.startPoint.y + offset
+    };
+    
+    // Endpunkt verschieben, falls vorhanden
+    if (duplicatedShape.endPoint) {
+      duplicatedShape.endPoint = {
+        x: (sourceShape.endPoint?.x || 0) + offset,
+        y: (sourceShape.endPoint?.y || 0) + offset
+      };
+    }
+    
+    // Dupliziertes Shape hinzufügen
+    this.addShape(pageNumber, duplicatedShape);
   }
 }
