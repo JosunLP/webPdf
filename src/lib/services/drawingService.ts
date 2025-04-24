@@ -107,6 +107,44 @@ export class DrawingService {
   }
 
   /**
+   * Verschiebt ein grafisches Element zu einer neuen Position
+   * @param pageNumber Die Seitennummer
+   * @param shapeId Die ID des zu verschiebenden Elements
+   * @param deltaX Änderung der X-Koordinate
+   * @param deltaY Änderung der Y-Koordinate
+   */
+  static moveShape(pageNumber: number, shapeId: string, deltaX: number, deltaY: number): void {
+    const doc = get(currentPdfDocument);
+    if (!doc) return;
+    
+    const page = doc.pages.find(p => p.pageNumber === pageNumber);
+    if (!page) return;
+    
+    const shape = page.shapes.find(s => s.id === shapeId);
+    if (!shape) return;
+    
+    // Erstellung einer Kopie des Shapes mit aktualisierten Positionen
+    const movedShape = { ...shape };
+    
+    // Startpunkt verschieben
+    movedShape.startPoint = {
+      x: shape.startPoint.x + deltaX,
+      y: shape.startPoint.y + deltaY
+    };
+    
+    // Endpunkt verschieben, falls vorhanden
+    if (shape.endPoint) {
+      movedShape.endPoint = {
+        x: shape.endPoint.x + deltaX,
+        y: shape.endPoint.y + deltaY
+      };
+    }
+    
+    // Shape aktualisieren
+    this.updateShape(pageNumber, movedShape);
+  }
+
+  /**
    * Findet ein Shape an einer bestimmten Position auf einer PDF-Seite
    * @param pageNumber Die Seitennummer
    * @param point Die zu prüfende Position

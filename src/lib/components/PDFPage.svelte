@@ -28,6 +28,8 @@
   // Variablen für Kommentare und Auswahl
   let editingCommentId: string | null = null;
   let selectedShape: ShapeElement | null = null;
+  let isDraggingShape = false;
+  let dragOffset = { x: 0, y: 0 };
 
   // Variablen für skalierte Dimensionen
   let scaledWidth = 0;
@@ -211,13 +213,11 @@
       
       if (shape) {
         selectedShape = shape;
-        
-        // Bestätigungsdialog anzeigen und das Element löschen, wenn bestätigt
-        const confirmDelete = confirm(`Möchten Sie dieses Element (${getShapeTypeName(shape.type)}) löschen?`);
-        if (confirmDelete) {
-          DrawingService.removeShape(page.pageNumber, shape.id);
-          selectedShape = null;
-        }
+        isDraggingShape = true;
+        dragOffset = {
+          x: startPoint.x - shape.startPoint.x,
+          y: startPoint.y - shape.startPoint.y
+        };
       }
       
       return;
@@ -255,6 +255,40 @@
   }
   
   function handleMouseMove(event: MouseEvent): void {
+    if (isDraggingShape && selectedShape) {
+      const currentPoint = getPageCoordinates(event);
+      
+      // Berechne die neue Position des Shapes
+      const newX = currentPoint.x - dragOffset.x;
+      const newY = currentPoint.y - dragOffset.y;
+      
+      // Berechne die Differenz zwischen alter und neuer Position
+      const deltaX = newX - selectedShape.startPoint.x;
+      const deltaY = newY - selectedShape.startPoint.y;
+      
+      // Klonen des Shape-Objekts zur lokalen Bearbeitung
+      const tempShape = { ...selectedShape };
+      
+      // Anpassen des Startpunkts
+      tempShape.startPoint = {
+        x: newX,
+        y: newY
+      };
+      
+      // Anpassen des Endpunkts, falls vorhanden
+      if (tempShape.endPoint && selectedShape.endPoint) {
+        tempShape.endPoint = {
+          x: selectedShape.endPoint.x + deltaX,
+          y: selectedShape.endPoint.y + deltaY
+        };
+      }
+      
+      // Lokale temporäre Version des Shapes zum Rendern verwenden
+      selectedShape = tempShape;
+      renderShapes();
+      return;
+    }
+    
     if (!isDrawing || !startPoint) return;
     
     const currentPoint = getPageCoordinates(event);
@@ -267,6 +301,28 @@
   }
   
   function handleMouseUp(event: MouseEvent): void {
+    if (isDraggingShape && selectedShape) {
+      // Shape-Position aktualisieren, wenn es verschoben wurde
+      const currentPoint = getPageCoordinates(event);
+      const newPosition = {
+        x: currentPoint.x - dragOffset.x,
+        y: currentPoint.y - dragOffset.y
+      };
+      
+      // Berechne die Delta-Bewegung (Wie weit wurde das Element verschoben)
+      const deltaX = newPosition.x - selectedShape.startPoint.x;
+      const deltaY = newPosition.y - selectedShape.startPoint.y;
+      
+      // Wenn eine signifikante Verschiebung stattgefunden hat, speichere die neue Position
+      if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+        DrawingService.moveShape(page.pageNumber, selectedShape.id, deltaX, deltaY);
+      }
+      
+      isDraggingShape = false;
+      selectedShape = null;
+      return;
+    }
+    
     if (!isDrawing || !startPoint) return;
     
     const endPoint = getPageCoordinates(event);

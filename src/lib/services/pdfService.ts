@@ -764,10 +764,21 @@ export class PDFService {
                   // Prüfen, ob es ein JPEG oder PNG ist und entsprechend einbetten
                   let embeddedImage;
                   if (shape.imageData.includes('data:image/jpeg')) {
-                    embeddedImage = await pdfDoc.embedJpg(Buffer.from(base64Data, 'base64'));
+                    // Browser-kompatible Konvertierung von Base64 zu Uint8Array
+                    const binaryString = atob(base64Data);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                      bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    embeddedImage = await pdfDoc.embedJpg(bytes);
                   } else {
                     // Standardmäßig als PNG behandeln
-                    embeddedImage = await pdfDoc.embedPng(Buffer.from(base64Data, 'base64'));
+                    const binaryString = atob(base64Data);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                      bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    embeddedImage = await pdfDoc.embedPng(bytes);
                   }
                   
                   // Bildgröße berechnen
