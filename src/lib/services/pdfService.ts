@@ -72,6 +72,7 @@ export interface ShapeElement {
   imageData?: string;  // Base64-codiertes Bild
   imageWidth?: number; // Originalgröße
   imageHeight?: number; // Originalgröße
+  rotation?: number;   // Rotation in Grad (0-360)
 }
 
 // Interface für PDF-Seiten
@@ -106,14 +107,15 @@ export interface SearchResult {
 // Aktuelles Zeichenwerkzeug
 export enum DrawingTool {
   NONE = 'none',
+  SELECT = 'select',
   RECTANGLE = 'rectangle',
   CIRCLE = 'circle',
   LINE = 'line',
   ARROW = 'arrow',
   TEXT = 'text',
   COMMENT = 'comment',
-  SELECT = 'select',
-  IMAGE = 'image'  // Neues Zeichenwerkzeug für Bilder
+  IMAGE = 'image',  // Neues Zeichenwerkzeug für Bilder
+  TABLE = 'table'   // Neues Zeichenwerkzeug für Tabellen
 }
 
 // Store für das aktuelle PDF-Dokument
@@ -647,57 +649,123 @@ export class PDFService {
         for (const shape of page.shapes) {
           switch (shape.type) {
             case ShapeType.RECTANGLE:
-              newPage.drawRectangle({
-                x: shape.startPoint.x,
-                y: shape.startPoint.y,
-                width: shape.endPoint ? shape.endPoint.x - shape.startPoint.x : 0,
-                height: shape.endPoint ? shape.endPoint.y - shape.startPoint.y : 0,
-                color: rgb(...hexToRgb(shape.color)),
-                borderWidth: shape.lineWidth,
-                borderColor: rgb(...hexToRgb(shape.color)),
-                opacity: shape.filled ? 1 : 0
-              });
+              // Bei Rotation die Canvas-Transformation anwenden
+              if (shape.rotation) {
+                const width = shape.endPoint ? shape.endPoint.x - shape.startPoint.x : 0;
+                const height = shape.endPoint ? shape.endPoint.y - shape.startPoint.y : 0;
+                const centerX = shape.startPoint.x + width / 2;
+                const centerY = shape.startPoint.y + height / 2;
+                
+                // SVG-Transformation für Rotation anwenden
+                const rotationTransform = `rotate(${shape.rotation}, ${centerX}, ${centerY})`;
+                
+                // Rechteck mit Transformation als SVG-Path zeichnen
+                const rectPath = `M ${shape.startPoint.x},${shape.startPoint.y} l ${width},0 l 0,${height} l -${width},0 Z`;
+                newPage.drawSvgPath(rectPath, {
+                  transform: rotationTransform,
+                  color: rgb(...hexToRgb(shape.color)),
+                  borderWidth: shape.lineWidth,
+                  borderColor: rgb(...hexToRgb(shape.color)),
+                  opacity: shape.filled ? 1 : 0
+                });
+              } else {
+                // Normales Rechteck ohne Rotation
+                newPage.drawRectangle({
+                  x: shape.startPoint.x,
+                  y: shape.startPoint.y,
+                  width: shape.endPoint ? shape.endPoint.x - shape.startPoint.x : 0,
+                  height: shape.endPoint ? shape.endPoint.y - shape.startPoint.y : 0,
+                  color: rgb(...hexToRgb(shape.color)),
+                  borderWidth: shape.lineWidth,
+                  borderColor: rgb(...hexToRgb(shape.color)),
+                  opacity: shape.filled ? 1 : 0
+                });
+              }
               break;
-            case ShapeType.CIRCLE:
-              newPage.drawEllipse({
-                x: shape.startPoint.x,
-                y: shape.startPoint.y,
-                xScale: shape.endPoint ? (shape.endPoint.x - shape.startPoint.x) / 2 : 0,
-                yScale: shape.endPoint ? (shape.endPoint.y - shape.startPoint.y) / 2 : 0,
-                color: rgb(...hexToRgb(shape.color)),
-                borderWidth: shape.lineWidth,
-                borderColor: rgb(...hexToRgb(shape.color)),
-                opacity: shape.filled ? 1 : 0
-              });
+            case ShapeType.CIRCLE: {
+              const radiusX = shape.endPoint ? Math.abs(shape.endPoint.x - shape.startPoint.x) / 2 : 0;
+              const radiusY = shape.endPoint ? Math.abs(shape.endPoint.y - shape.startPoint.y) / 2 : 0;
+              const centerX = shape.startPoint.x + (shape.endPoint ? (shape.endPoint.x - shape.startPoint.x) / 2 : 0);
+              const centerY = shape.startPoint.y + (shape.endPoint ? (shape.endPoint.y - shape.startPoint.y) / 2 : 0);
+              
+              if (shape.rotation) {
+                // SVG-Path für Ellipse erstellen
+                const ellipsePath = `M ${centerX},${centerY - radiusY} 
+                  C ${centerX + radiusX * 0.55},${centerY - radiusY} ${centerX + radiusX},${centerY - radiusY * 0.55} ${centerX + radiusX},${centerY} 
+                  C ${centerX + radiusX},${centerY + radiusY * 0.55} ${centerX + radiusX * 0.55},${centerY + radiusY} ${centerX},${centerY + radiusY} 
+                  C ${centerX - radiusX * 0.55},${centerY + radiusY} ${centerX - radiusX},${centerY + radiusY * 0.55} ${centerX - radiusX},${centerY} 
+                  C ${centerX - radiusX},${centerY - radiusY * 0.55} ${centerX - radiusX * 0.55},${centerY - radiusY} ${centerX},${centerY - radiusY} Z`;
+                
+                // SVG-Transformation für Rotation anwenden
+                const rotationTransform = `rotate(${shape.rotation}, ${centerX}, ${centerY})`;
+                
+                // Ellipse mit Transformation als SVG-Path zeichnen
+                newPage.drawSvgPath(ellipsePath, {
+                  transform: rotationTransform,
+                  color: rgb(...hexToRgb(shape.color)),
+                  borderWidth: shape.lineWidth,
+                  borderColor: rgb(...hexToRgb(shape.color)),
+                  opacity: shape.filled ? 1 : 0
+                });
+              } else {
+                // Normale Ellipse ohne Rotation
+                newPage.drawEllipse({
+                  x: centerX,
+                  y: centerY,
+                  xScale: radiusX,
+                  yScale: radiusY,
+                  color: rgb(...hexToRgb(shape.color)),
+                  borderWidth: shape.lineWidth,
+                  borderColor: rgb(...hexToRgb(shape.color)),
+                  opacity: shape.filled ? 1 : 0
+                });
+              }
               break;
+            }
             case ShapeType.LINE:
-              newPage.drawLine({
-                start: shape.startPoint,
-                end: shape.endPoint || shape.startPoint,
-                thickness: shape.lineWidth,
-                color: rgb(...hexToRgb(shape.color)),
-                lineCap: LineCapStyle.Round
-              });
+              if (shape.rotation && shape.endPoint) {
+                // Mittelpunkt berechnen
+                const centerX = (shape.startPoint.x + shape.endPoint.x) / 2;
+                const centerY = (shape.startPoint.y + shape.endPoint.y) / 2;
+                
+                // SVG-Pfad für Linie erstellen
+                const linePath = `M ${shape.startPoint.x},${shape.startPoint.y} L ${shape.endPoint.x},${shape.endPoint.y}`;
+                
+                // SVG-Transformation für Rotation anwenden
+                const rotationTransform = `rotate(${shape.rotation}, ${centerX}, ${centerY})`;
+                
+                // Linie mit Rotation als SVG-Path zeichnen
+                newPage.drawSvgPath(linePath, {
+                  transform: rotationTransform,
+                  stroke: rgb(...hexToRgb(shape.color)),
+                  strokeWidth: shape.lineWidth,
+                  opacity: 1
+                });
+              } else {
+                // Normale Linie ohne Rotation
+                newPage.drawLine({
+                  start: shape.startPoint,
+                  end: shape.endPoint || shape.startPoint,
+                  thickness: shape.lineWidth,
+                  color: rgb(...hexToRgb(shape.color)),
+                  lineCap: LineCapStyle.Round
+                });
+              }
               break;
             case ShapeType.ARROW:
-              // Linie zeichnen
-              newPage.drawLine({
-                start: shape.startPoint,
-                end: shape.endPoint || shape.startPoint,
-                thickness: shape.lineWidth,
-                color: rgb(...hexToRgb(shape.color)),
-                lineCap: LineCapStyle.Round
-              });
-              
-              // Pfeilspitze zeichnen
-              if (shape.endPoint) {
+              if (shape.rotation && shape.endPoint) {
+                // Mittelpunkt berechnen
+                const centerX = (shape.startPoint.x + shape.endPoint.x) / 2;
+                const centerY = (shape.startPoint.y + shape.endPoint.y) / 2;
+                
+                // Winkel und Pfeilgrößen
                 const angle = Math.atan2(
                   shape.endPoint.y - shape.startPoint.y, 
                   shape.endPoint.x - shape.startPoint.x
                 );
-                const headSize = 15; // Größe der Pfeilspitze
+                const headSize = 15;
                 
-                // Punkte für das Dreieck der Pfeilspitze berechnen
+                // Punktkoordinaten für Pfeilspitze berechnen
                 const p1 = shape.endPoint;
                 const p2 = {
                   x: shape.endPoint.x - headSize * Math.cos(angle - Math.PI / 6),
@@ -708,14 +776,61 @@ export class PDFService {
                   y: shape.endPoint.y - headSize * Math.sin(angle + Math.PI / 6)
                 };
                 
-                // Dreieck für die Pfeilspitze zeichnen mit SVG Path
-                const trianglePath = `M ${p1.x},${p1.y} L ${p2.x},${p2.y} L ${p3.x},${p3.y} Z`;
-                newPage.drawSvgPath(trianglePath, {
-                  color: rgb(...hexToRgb(shape.color)),
-                  borderColor: rgb(...hexToRgb(shape.color)),
-                  borderWidth: 0,
+                // SVG-Pfad für Linie und Pfeilspitze
+                const arrowPath = `M ${shape.startPoint.x},${shape.startPoint.y} 
+                  L ${shape.endPoint.x},${shape.endPoint.y} 
+                  M ${p1.x},${p1.y} L ${p2.x},${p2.y} L ${p3.x},${p3.y} Z`;
+                
+                // SVG-Transformation für Rotation anwenden
+                const rotationTransform = `rotate(${shape.rotation}, ${centerX}, ${centerY})`;
+                
+                // Pfeil mit Rotation als SVG-Path zeichnen
+                newPage.drawSvgPath(arrowPath, {
+                  transform: rotationTransform,
+                  stroke: rgb(...hexToRgb(shape.color)),
+                  fill: rgb(...hexToRgb(shape.color)),
+                  strokeWidth: shape.lineWidth,
                   opacity: 1
                 });
+              } else {
+                // Pfeil ohne Rotation normal zeichnen
+                // Linie zeichnen
+                newPage.drawLine({
+                  start: shape.startPoint,
+                  end: shape.endPoint || shape.startPoint,
+                  thickness: shape.lineWidth,
+                  color: rgb(...hexToRgb(shape.color)),
+                  lineCap: LineCapStyle.Round
+                });
+                
+                // Pfeilspitze zeichnen
+                if (shape.endPoint) {
+                  const angle = Math.atan2(
+                    shape.endPoint.y - shape.startPoint.y, 
+                    shape.endPoint.x - shape.startPoint.x
+                  );
+                  const headSize = 15; // Größe der Pfeilspitze
+                  
+                  // Punkte für das Dreieck der Pfeilspitze berechnen
+                  const p1 = shape.endPoint;
+                  const p2 = {
+                    x: shape.endPoint.x - headSize * Math.cos(angle - Math.PI / 6),
+                    y: shape.endPoint.y - headSize * Math.sin(angle - Math.PI / 6)
+                  };
+                  const p3 = {
+                    x: shape.endPoint.x - headSize * Math.cos(angle + Math.PI / 6),
+                    y: shape.endPoint.y - headSize * Math.sin(angle + Math.PI / 6)
+                  };
+                  
+                  // Dreieck für die Pfeilspitze zeichnen mit SVG Path
+                  const trianglePath = `M ${p1.x},${p1.y} L ${p2.x},${p2.y} L ${p3.x},${p3.y} Z`;
+                  newPage.drawSvgPath(trianglePath, {
+                    color: rgb(...hexToRgb(shape.color)),
+                    borderColor: rgb(...hexToRgb(shape.color)),
+                    borderWidth: 0,
+                    opacity: 1
+                  });
+                }
               }
               break;
             case ShapeType.TEXT:
@@ -732,24 +847,66 @@ export class PDFService {
                   textFont = helveticaOblique;
                 }
                 
-                // Text zeichnen mit korrekter Formatierung
-                newPage.drawText(shape.text, {
-                  x: shape.startPoint.x,
-                  y: shape.startPoint.y,
-                  size: formatting.fontSize,
-                  font: textFont,
-                  color: rgb(...hexToRgb(shape.color))
-                });
-                
-                // Unterstreichung hinzufügen, falls erforderlich
-                if (formatting.isUnderline) {
-                  const textWidth = textFont.widthOfTextAtSize(shape.text, formatting.fontSize);
-                  newPage.drawLine({
-                    start: { x: shape.startPoint.x, y: shape.startPoint.y - formatting.fontSize/8 },
-                    end: { x: shape.startPoint.x + textWidth, y: shape.startPoint.y - formatting.fontSize/8 },
-                    thickness: formatting.fontSize / 20,
+                if (shape.rotation) {
+                  // Text mit Rotation zeichnen
+                  // Da PDFLib keine direkte Möglichkeit bietet, Text zu rotieren,
+                  // verwenden wir eine Transformation auf die Seite
+                  
+                  // Aktuelle Seiten-Transformation speichern
+                  const { width: textWidth } = textFont.widthOfTextAtSize(shape.text, formatting.fontSize);
+                  
+                  // Transformation anwenden (Übersetzung zur Position, Rotation, Rückübersetzung)
+                  newPage.pushOperators(
+                    // Aktuelle Matrix speichern
+                    'q',
+                    // Translation zur Textposition
+                    `1 0 0 1 ${shape.startPoint.x} ${shape.startPoint.y} cm`,
+                    // Rotation um die Textposition
+                    `${Math.cos(shape.rotation * Math.PI / 180)} ${Math.sin(shape.rotation * Math.PI / 180)} ${-Math.sin(shape.rotation * Math.PI / 180)} ${Math.cos(shape.rotation * Math.PI / 180)} 0 0 cm`
+                  );
+                  
+                  // Text an der Position (0,0) im transformierten Koordinatensystem zeichnen
+                  newPage.drawText(shape.text, {
+                    x: 0,
+                    y: 0,
+                    size: formatting.fontSize,
+                    font: textFont,
                     color: rgb(...hexToRgb(shape.color))
                   });
+                  
+                  // Unterstreichung hinzufügen, falls erforderlich
+                  if (formatting.isUnderline) {
+                    newPage.drawLine({
+                      start: { x: 0, y: -formatting.fontSize/8 },
+                      end: { x: textWidth, y: -formatting.fontSize/8 },
+                      thickness: formatting.fontSize / 20,
+                      color: rgb(...hexToRgb(shape.color))
+                    });
+                  }
+                  
+                  // Transformation zurücksetzen
+                  newPage.pushOperators('Q');
+                } else {
+                  // Normaler Text ohne Rotation
+                  // Text zeichnen mit korrekter Formatierung
+                  newPage.drawText(shape.text, {
+                    x: shape.startPoint.x,
+                    y: shape.startPoint.y,
+                    size: formatting.fontSize,
+                    font: textFont,
+                    color: rgb(...hexToRgb(shape.color))
+                  });
+                  
+                  // Unterstreichung hinzufügen, falls erforderlich
+                  if (formatting.isUnderline) {
+                    const textWidth = textFont.widthOfTextAtSize(shape.text, formatting.fontSize);
+                    newPage.drawLine({
+                      start: { x: shape.startPoint.x, y: shape.startPoint.y - formatting.fontSize/8 },
+                      end: { x: shape.startPoint.x + textWidth, y: shape.startPoint.y - formatting.fontSize/8 },
+                      thickness: formatting.fontSize / 20,
+                      color: rgb(...hexToRgb(shape.color))
+                    });
+                  }
                 }
               }
               break;
@@ -785,13 +942,42 @@ export class PDFService {
                   const width = shape.endPoint.x - shape.startPoint.x;
                   const height = shape.endPoint.y - shape.startPoint.y;
                   
-                  // Bild zeichnen
-                  newPage.drawImage(embeddedImage, {
-                    x: shape.startPoint.x,
-                    y: page.height - shape.startPoint.y - height,
-                    width,
-                    height
-                  });
+                  if (shape.rotation) {
+                    // Mittelpunkt des Bildes für die Rotation berechnen
+                    const centerX = shape.startPoint.x + width / 2;
+                    const centerY = shape.startPoint.y + height / 2;
+                    
+                    // Transformation anwenden (Übersetzung zur Position, Rotation, Rückübersetzung)
+                    newPage.pushOperators(
+                      // Aktuelle Matrix speichern
+                      'q',
+                      // Translation zum Mittelpunkt des Bildes
+                      `1 0 0 1 ${centerX} ${centerY} cm`,
+                      // Rotation um den Mittelpunkt
+                      `${Math.cos(shape.rotation * Math.PI / 180)} ${Math.sin(shape.rotation * Math.PI / 180)} ${-Math.sin(shape.rotation * Math.PI / 180)} ${Math.cos(shape.rotation * Math.PI / 180)} 0 0 cm`,
+                      // Zurück zur Bildposition
+                      `1 0 0 1 ${-centerX} ${-centerY} cm`
+                    );
+                    
+                    // Bild an seiner normalen Position zeichnen
+                    newPage.drawImage(embeddedImage, {
+                      x: shape.startPoint.x,
+                      y: page.height - shape.startPoint.y - height,
+                      width,
+                      height
+                    });
+                    
+                    // Transformation zurücksetzen
+                    newPage.pushOperators('Q');
+                  } else {
+                    // Normales Bild ohne Rotation zeichnen
+                    newPage.drawImage(embeddedImage, {
+                      x: shape.startPoint.x,
+                      y: page.height - shape.startPoint.y - height,
+                      width,
+                      height
+                    });
+                  }
                 } catch (error) {
                   console.error("Fehler beim Einbetten des Bildes ins PDF:", error);
                 }

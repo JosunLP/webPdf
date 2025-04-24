@@ -199,6 +199,58 @@ export class DrawingService {
   }
 
   /**
+   * Rotiert ein grafisches Element um einen bestimmten Winkel
+   * @param pageNumber Die Seitennummer
+   * @param shapeId Die ID des zu rotierenden Elements
+   * @param angle Der Rotationswinkel in Grad (0-360)
+   */
+  static rotateShape(pageNumber: number, shapeId: string, angle: number): void {
+    const doc = get(currentPdfDocument);
+    if (!doc) return;
+    
+    const page = doc.pages.find(p => p.pageNumber === pageNumber);
+    if (!page) return;
+    
+    const shape = page.shapes.find(s => s.id === shapeId);
+    if (!shape) return;
+    
+    // Sicherstellen, dass der Winkel zwischen 0 und 360 Grad liegt
+    const normalizedAngle = ((angle % 360) + 360) % 360;
+    
+    // Erstellung einer Kopie des Shapes mit aktualisierter Rotation
+    const rotatedShape = { ...shape, rotation: normalizedAngle };
+    
+    // Shape aktualisieren
+    this.updateShape(pageNumber, rotatedShape);
+  }
+  
+  /**
+   * Inkrementelle Rotation eines Elements
+   * @param pageNumber Die Seitennummer
+   * @param shapeId Die ID des zu rotierenden Elements
+   * @param deltaAngle Änderung des Winkels in Grad
+   */
+  static rotateShapeBy(pageNumber: number, shapeId: string, deltaAngle: number): void {
+    const doc = get(currentPdfDocument);
+    if (!doc) return;
+    
+    const page = doc.pages.find(p => p.pageNumber === pageNumber);
+    if (!page) return;
+    
+    const shape = page.shapes.find(s => s.id === shapeId);
+    if (!shape) return;
+    
+    // Aktuellen Rotationswinkel ermitteln oder mit 0 initialisieren
+    const currentRotation = shape.rotation || 0;
+    
+    // Neuen Rotationswinkel berechnen
+    const newRotation = ((currentRotation + deltaAngle) % 360 + 360) % 360;
+    
+    // Shape mit aktualisiertem Rotationswinkel aktualisieren
+    this.rotateShape(pageNumber, shapeId, newRotation);
+  }
+
+  /**
    * Prüft, ob ein Punkt auf einem Größenänderungs-Handle liegt
    * @param point Der zu prüfende Punkt
    * @param shape Das zu prüfende Shape
@@ -791,6 +843,21 @@ export class DrawingService {
         x: shape.endPoint.x * scale,
         y: shape.endPoint.y * scale
       } : start;
+
+      // Wenn eine Rotation angewendet werden soll
+      if (shape.rotation && shape.rotation !== 0) {
+        // Mittelpunkt für die Rotation berechnen
+        const centerX = start.x + (end.x - start.x) / 2;
+        const centerY = start.y + (end.y - start.y) / 2;
+        
+        // Canvas-Zustand speichern
+        ctx.save();
+        
+        // Transformation für Rotation um den Mittelpunkt anwenden
+        ctx.translate(centerX, centerY);
+        ctx.rotate(shape.rotation * Math.PI / 180); // Umrechnung von Grad in Radian
+        ctx.translate(-centerX, -centerY);
+      }
       
       // Je nach Typ des Elements unterschiedliche Zeichenoperationen ausführen
       switch (shape.type) {
@@ -918,6 +985,11 @@ export class DrawingService {
           }
           break;
       }
+      
+      // Canvas-Zustand wiederherstellen, wenn eine Rotation angewendet wurde
+      if (shape.rotation && shape.rotation !== 0) {
+        ctx.restore();
+      }
     });
   }
 
@@ -961,5 +1033,185 @@ export class DrawingService {
     
     // Dupliziertes Shape hinzufügen
     this.addShape(pageNumber, duplicatedShape);
+  }
+
+  /**
+   * Fügt eine Tabelle zu einer PDF-Seite hinzu
+   * @param pageNumber Die Seitennummer
+   * @param tableOptions Optionen für die zu erstellende Tabelle oder direkt eine PdfTable-Instanz
+   */
+  static async addTable(pageNumber: number, tableOptions: any): Promise<void> {
+    try {
+      // Erstelle PDFDocument aus dem aktuellen Dokument
+      const doc = get(currentPdfDocument);
+      if (!doc) return;
+      
+      const page = doc.pages.find(p => p.pageNumber === pageNumber);
+      if (!page) return;
+      
+      // Konvertiere die Tabelle zu einer PDF-Datei
+      const pdfDoc = await tableOptions.toPDF();
+      
+      // Konvertiere das PDFDocument in eine Base64-Zeichenkette
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      
+      // Konvertiere das PDF in ein Bild mit Hilfe von pdf.js
+      const pdfData = await this.blobToBase64(blob);
+      const imageData = await this.pdfToImage(pdfData);
+      
+      // Position der Tabelle festlegen (zentriert auf der Seite)
+      const position = {
+        x: page.width / 4,
+        y: page.height / 4
+      };
+      
+      // Bildgröße festlegen (50% der Seitengröße)
+      const width = page.width / 2;
+      const height = page.height / 2;
+      
+      // Endposition berechnen
+      const endPoint = {
+        x: position.x + width,
+        y: position.y + height
+      };
+      
+      // Shape erstellen und hinzufügen
+      const tableShape = {
+        id: `table-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        type: ShapeType.IMAGE, // Tabelle wird als Bild eingefügt
+        startPoint: position,
+        endPoint: endPoint,
+        color: '#000000',
+        lineWidth: 1,
+        filled: false,
+        imageData: imageData
+      };
+      
+      this.addShape(pageNumber, tableShape);
+    } catch (error) {
+      console.error("Fehler beim Hinzufügen der Tabelle:", error);
+      alert("Die Tabelle konnte nicht hinzugefügt werden.");
+    }
+  }
+  
+  /**
+   * Konvertiert einen Blob in Base64
+   */
+  private static async blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+  
+  /**
+   * Konvertiert ein PDF in ein Bild mit pdf.js
+   */
+  private static async pdfToImage(pdfData: string): Promise<string> {
+    try {
+      // Extrahiere die Base64-Daten ohne den MIME-Typ-Header
+      const base64Data = pdfData.substring(pdfData.indexOf(',') + 1);
+      
+      // Konvertiere Base64 zu Binärdaten
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      // Lade pdfjs dynamisch
+      const pdfjs = await import('pdfjs-dist');
+      
+      // Worker konfigurieren
+      pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+      
+      // PDF laden
+      const loadingTask = pdfjs.getDocument({ data: bytes.buffer });
+      const pdf = await loadingTask.promise;
+      
+      // Erste Seite rendern
+      const page = await pdf.getPage(1);
+      
+      // Skalieren auf eine vernünftige Größe für ein Vorschaubild
+      const viewport = page.getViewport({ scale: 2 });
+      
+      // Canvas für das Rendern erstellen
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      
+      // Auf Canvas rendern
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas-Kontext konnte nicht erstellt werden');
+      
+      const renderContext = {
+        canvasContext: ctx,
+        viewport: viewport
+      };
+      
+      await page.render(renderContext).promise;
+      
+      // Canvas zu Bild konvertieren
+      return canvas.toDataURL('image/png');
+    } catch (error) {
+      console.error('Fehler bei der PDF zu Bild Konvertierung:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Erstellt eine Tabelle mit den angegebenen Optionen
+   * @param tableOptions Optionen für die Tabelle
+   */
+  static createTable(tableOptions: any): any {
+    // Import der erforderlichen Module aus der Tabellenbibliothek
+    const { PdfTable } = require('$lib/packages/table-lib');
+    const { financialTableDesign, minimal, dataTableDesign, highContrastDesignConfig } = require('$lib/packages/table-lib');
+    
+    // Designkonfiguration basierend auf der Optionsangabe wählen
+    let designConfig;
+    
+    if (tableOptions.design === 'financial') {
+      designConfig = financialTableDesign;
+    } else if (tableOptions.design === 'data') {
+      designConfig = dataTableDesign;
+    } else if (tableOptions.design === 'minimal') {
+      designConfig = minimal;
+    } else if (tableOptions.design === 'highContrast') {
+      designConfig = highContrastDesignConfig;
+    } else {
+      // Verwende das direkt angegebene Design, wenn vorhanden
+      designConfig = tableOptions.design || minimal;
+    }
+    
+    // Tabelle erstellen
+    const table = new PdfTable({
+      rows: tableOptions.rows || 3,
+      columns: tableOptions.columns || 3,
+      designConfig: designConfig
+    });
+    
+    // Beispielwerte für die Tabelle einfügen
+    for (let row = 0; row < tableOptions.rows; row++) {
+      for (let col = 0; col < tableOptions.columns; col++) {
+        // Header-Zeile mit Spaltentiteln
+        if (row === 0) {
+          table.setCell(row, col, `Spalte ${col + 1}`);
+        }
+        // Erste Spalte mit Zeilentiteln
+        else if (col === 0) {
+          table.setCell(row, col, `Zeile ${row}`);
+        }
+        // Sonstige Zellen mit Beispielwerten
+        else {
+          table.setCell(row, col, `Zelle ${row},${col}`);
+        }
+      }
+    }
+    
+    return table;
   }
 }

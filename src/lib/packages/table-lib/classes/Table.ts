@@ -34,6 +34,36 @@ export class PdfTable {
   private imageEmbedder: ImageEmbedder;
   public templateManager: TableTemplateManager;
 
+  /**
+   * Erstellt eine neue Tabelle mit den angegebenen Optionen
+   * @static
+   * @param {TableOptions} options - Tabellenoptionen
+   * @returns {PdfTable} Neue Tabelleninstanz
+   */
+  static createTable(options: TableOptions): PdfTable {
+    const table = new PdfTable(options);
+    
+    // Beispielwerte für die Tabelle einfügen
+    for (let row = 0; row < options.rows; row++) {
+      for (let col = 0; col < options.columns; col++) {
+        // Header-Zeile mit Spaltentiteln
+        if (row === 0) {
+          table.setCell(row, col, `Spalte ${col + 1}`);
+        }
+        // Erste Spalte mit Zeilentiteln
+        else if (col === 0) {
+          table.setCell(row, col, `Zeile ${row}`);
+        }
+        // Sonstige Zellen mit Beispielwerten
+        else {
+          table.setCell(row, col, `Zelle ${row},${col}`);
+        }
+      }
+    }
+    
+    return table;
+  }
+
   constructor(options: TableOptions) {
     // Set default values if not present and merge design config
     const completeOptions = {

@@ -6,6 +6,10 @@
   import { currentDrawingTool, DrawingTool, ShapeType } from '$lib/services/pdfService';
   import { DrawingService } from '$lib/services/drawingService';
   import CommentMarker from './CommentMarker.svelte';
+  // Importiere Tabellenbibliothek
+  import { PdfTable } from '$lib/packages/table-lib';
+  import { financialTableDesign, minimal, dataTableDesign, highContrastDesignConfig } from '$lib/packages/table-lib';
+  import type { TableOptions } from '$lib/packages/table-lib';
   
   export let page: PDFPage;
   export let scale: number = 1.0;
@@ -19,11 +23,17 @@
   let drawingCanvas: HTMLCanvasElement;
   let drawingCtx: CanvasRenderingContext2D | null;
   
-  // Variablen für die Zeichenfunktion
+  // Variablen für grafische Elemente
   let isDrawing = false;
   let startPoint: Point | null = null;
   let currentShape: any = null;
   let drawingTool = DrawingTool.NONE;
+  
+  // Variablen für Tabellenerstellung
+  let tableOptionsVisible = false;
+  let tableRows = 3;
+  let tableColumns = 3;
+  let tableDesign = 'financial'; // 'financial', 'data', 'minimal', 'highContrast'
   
   // Variablen für Kommentare und Auswahl
   let editingCommentId: string | null = null;
@@ -37,6 +47,11 @@
   let resizeStartPoint: Point | null = null;
   let resizeShapeId: string | null = null;
   let shiftKeyPressed = false; // Für Beibehaltung des Seitenverhältnisses
+
+  // Variablen für Rotation
+  let isRotating = false;
+  let rotationStartAngle = 0;
+  let rotationShapeId: string | null = null;
 
   // Variablen für skalierte Dimensionen
   let scaledWidth = 0;
@@ -219,6 +234,73 @@
     };
   }
   
+  // Funktion zum Hinzufügen eines Rotations-Handles zur Form
+  function addRotationHandle(shape: ShapeElement): void {
+    if (!shape.endPoint) return;
+
+    // Position des Rotations-Handles berechnen (oben in der Mitte)
+    const centerX = (shape.startPoint.x + shape.endPoint.x) / 2;
+    const minY = Math.min(shape.startPoint.y, shape.endPoint.y);
+    
+    // Rotations-Handle anzeigen
+    const handleElement = document.createElement('div');
+    handleElement.className = 'rotation-handle';
+    handleElement.style.position = 'absolute';
+    handleElement.style.left = `${centerX * scale - 5}px`;
+    handleElement.style.top = `${minY * scale - 20}px`;
+    handleElement.style.width = '10px';
+    handleElement.style.height = '10px';
+    handleElement.style.borderRadius = '50%';
+    handleElement.style.backgroundColor = '#3b82f6';
+    handleElement.style.border = '2px solid white';
+    handleElement.style.cursor = 'grab';
+    handleElement.style.boxShadow = '0 0 3px rgba(0, 0, 0, 0.5)';
+    handleElement.style.zIndex = '100';
+    
+    // Linie vom Center zum Handle
+    const lineElement = document.createElement('div');
+    lineElement.className = 'rotation-line';
+    lineElement.style.position = 'absolute';
+    lineElement.style.left = `${centerX * scale}px`;
+    lineElement.style.top = `${minY * scale}px`;
+    lineElement.style.width = '1px';
+    lineElement.style.height = '20px';
+    lineElement.style.backgroundColor = '#3b82f6';
+    lineElement.style.transformOrigin = 'bottom';
+    lineElement.style.transform = 'translateX(-50%) translateY(-100%)';
+    lineElement.style.pointerEvents = 'none';
+    
+    // Event-Listener für Drag-Start
+    handleElement.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      isRotating = true;
+      rotationShapeId = shape.id;
+      
+      // Mittelpunkt der Form berechnen
+      const center = {
+        x: ((shape.startPoint.x + shape.endPoint.x) / 2) * scale,
+        y: ((shape.startPoint.y + shape.endPoint.y) / 2) * scale
+      };
+      
+      // Startwinkel berechnen
+      const startVector = {
+        x: e.clientX - container.getBoundingClientRect().left - center.x,
+        y: e.clientY - container.getBoundingClientRect().top - center.y
+      };
+      rotationStartAngle = Math.atan2(startVector.y, startVector.x) * (180 / Math.PI);
+      
+      // Bei Shape gespeicherter Winkel berücksichtigen
+      rotationStartAngle -= shape.rotation || 0;
+      
+      // Cursor während der Rotation ändern
+      document.body.style.cursor = 'grabbing';
+    });
+    
+    // Zum Container hinzufügen
+    container.appendChild(lineElement);
+    container.appendChild(handleElement);
+  }
+  
   // Event-Handler für Zeichenoperationen
   function handleMouseDown(event: MouseEvent): void {
     if (editable) return;
@@ -322,6 +404,44 @@
   }
   
   function handleMouseMove(event: MouseEvent): void {
+    if (isRotating && rotationShapeId) {
+      const shape = page.shapes.find(s => s.id === rotationShapeId);
+      if (!shape || !shape.endPoint) return;
+      
+      // Mittelpunkt der Form berechnen
+      const center = {
+        x: ((shape.startPoint.x + shape.endPoint.x) / 2) * scale,
+        y: ((shape.startPoint.y + shape.endPoint.y) / 2) * scale
+      };
+      
+      // Aktuellen Winkel berechnen
+      const currentVector = {
+        x: event.clientX - container.getBoundingClientRect().left - center.x,
+        y: event.clientY - container.getBoundingClientRect().top - center.y
+      };
+      const currentAngle = Math.atan2(currentVector.y, currentVector.x) * (180 / Math.PI);
+      
+      // Differenzwinkel berechnen
+      let angleDiff = currentAngle - rotationStartAngle;
+      
+      // Wenn Shift-Taste gedrückt ist, auf 15-Grad-Schritte einrasten
+      if (shiftKeyPressed) {
+        angleDiff = Math.round(angleDiff / 15) * 15;
+      }
+      
+      // Rotationswinkel aktualisieren (unter Berücksichtigung bereits vorhandener Rotation)
+      const existingRotation = shape.rotation || 0;
+      const newRotation = ((existingRotation + angleDiff) % 360 + 360) % 360;
+      
+      // Vorschau-Rotation anwenden
+      if (selectedShape && selectedShape.id === rotationShapeId) {
+        selectedShape = { ...selectedShape, rotation: newRotation };
+        renderShapes();
+      }
+      
+      return;
+    }
+    
     if (isResizing && resizeStartPoint && resizeShapeId && resizeHandle) {
       const currentPoint = getPageCoordinates(event);
       const shape = page.shapes.find(s => s.id === resizeShapeId);
@@ -414,6 +534,51 @@
   }
   
   function handleMouseUp(event: MouseEvent): void {
+    // Rotation-Handler
+    if (isRotating && rotationShapeId) {
+      const shape = page.shapes.find(s => s.id === rotationShapeId);
+      if (!shape || !shape.endPoint) return;
+      
+      // Mittelpunkt der Form berechnen
+      const center = {
+        x: ((shape.startPoint.x + shape.endPoint.x) / 2) * scale,
+        y: ((shape.startPoint.y + shape.endPoint.y) / 2) * scale
+      };
+      
+      // Aktuellen Winkel berechnen
+      const currentVector = {
+        x: event.clientX - container.getBoundingClientRect().left - center.x,
+        y: event.clientY - container.getBoundingClientRect().top - center.y
+      };
+      const currentAngle = Math.atan2(currentVector.y, currentVector.x) * (180 / Math.PI);
+      
+      // Differenzwinkel berechnen
+      let angleDiff = currentAngle - rotationStartAngle;
+      
+      // Wenn Shift-Taste gedrückt ist, auf 15-Grad-Schritte einrasten
+      if (shiftKeyPressed) {
+        angleDiff = Math.round(angleDiff / 15) * 15;
+      }
+      
+      // Rotationswinkel aktualisieren (unter Berücksichtigung bereits vorhandener Rotation)
+      const existingRotation = shape.rotation || 0;
+      const newRotation = ((existingRotation + angleDiff) % 360 + 360) % 360;
+      
+      // Rotation anwenden
+      DrawingService.rotateShape(page.pageNumber, rotationShapeId, newRotation);
+      
+      // Status zurücksetzen
+      isRotating = false;
+      rotationShapeId = null;
+      document.body.style.cursor = '';
+      
+      // Rotation-Handles entfernen
+      const handles = document.querySelectorAll('.rotation-handle, .rotation-line');
+      handles.forEach(handle => handle.remove());
+      
+      return;
+    }
+
     if (isResizing && resizeShapeId && selectedShape?.endPoint) {
       // Größenänderung abschließen und speichern
       const currentPoint = getPageCoordinates(event);
@@ -514,27 +679,6 @@
     }
   }
   
-  // Kontextmenü für Shapes
-  function showShapeContextMenu(event: MouseEvent, shape: ShapeElement): void {
-    event.preventDefault(); // Standard-Kontextmenü verhindern
-    
-    // Position berechnen (angepasst an die aktuelle Mausposition)
-    contextMenuPosition = { x: event.clientX, y: event.clientY };
-    contextMenuShapeId = shape.id;
-    showContextMenu = true;
-    
-    // Event-Listener hinzufügen, um das Menü zu schließen, wenn irgendwo geklickt wird
-    setTimeout(() => {
-      document.addEventListener('click', closeContextMenu, { once: true });
-    }, 10);
-  }
-  
-  // Kontextmenü schließen
-  function closeContextMenu(): void {
-    showContextMenu = false;
-    contextMenuShapeId = null;
-  }
-  
   // Ausgewähltes Shape duplizieren
   function duplicateSelectedShape(): void {
     if (contextMenuShapeId) {
@@ -549,6 +693,45 @@
       DrawingService.removeShape(page.pageNumber, contextMenuShapeId);
       closeContextMenu();
     }
+  }
+
+  // Ausgewähltes Shape rotieren
+  function rotateSelectedShape(angle: number): void {
+    if (contextMenuShapeId) {
+      DrawingService.rotateShapeBy(page.pageNumber, contextMenuShapeId, angle);
+      closeContextMenu();
+    }
+  }
+  
+  // Kontextmenü für Shapes
+  function showShapeContextMenu(event: MouseEvent, shape: ShapeElement): void {
+    event.preventDefault(); // Standard-Kontextmenü verhindern
+    
+    // Position berechnen (angepasst an die aktuelle Mausposition)
+    contextMenuPosition = { x: event.clientX, y: event.clientY };
+    contextMenuShapeId = shape.id;
+    showContextMenu = true;
+    
+    // Event-Listener hinzufügen, um das Menü zu schließen, wenn irgendwo geklickt wird
+    setTimeout(() => {
+      document.addEventListener('click', closeContextMenu, { once: true });
+    }, 10);
+  }
+
+  // Tabelle erstellen
+  function createTable(): void {
+    const tableOptions: TableOptions = {
+      rows: tableRows,
+      columns: tableColumns,
+      design: tableDesign === 'financial' ? financialTableDesign :
+              tableDesign === 'data' ? dataTableDesign :
+              tableDesign === 'minimal' ? minimal :
+              highContrastDesignConfig
+    };
+    
+    const table = PdfTable.createTable(tableOptions);
+    DrawingService.addTable(page.pageNumber, table);
+    DrawingService.setDrawingTool(DrawingTool.NONE);
   }
 </script>
 
@@ -640,6 +823,18 @@
         class="resize-handle bottom-right"
         style="left: {maxX - 5}px; top: {maxY - 5}px;"
       ></div>
+      
+      <!-- Rotations-Handle -->
+      {@const centerX = (selectedShape.startPoint.x + selectedShape.endPoint.x) / 2 * scale}
+      {@const minY = Math.min(selectedShape.startPoint.y, selectedShape.endPoint.y) * scale}
+      <div 
+        class="rotation-handle"
+        style="left: {centerX - 5}px; top: {minY - 20}px;"
+      ></div>
+      <div 
+        class="rotation-line"
+        style="left: {centerX}px; top: {minY}px; height: 20px;"
+      ></div>
     {/if}
     
     <!-- Editierbarer Textbereich -->
@@ -694,6 +889,79 @@
       >
         <button on:click={duplicateSelectedShape}>Duplizieren</button>
         <button on:click={deleteSelectedShape}>Löschen</button>
+        <div class="context-menu-separator"></div>
+        <button on:click={() => rotateSelectedShape(90)}>90° im Uhrzeigersinn</button>
+        <button on:click={() => rotateSelectedShape(-90)}>90° gegen Uhrzeigersinn</button>
+        <button on:click={() => rotateSelectedShape(45)}>45° im Uhrzeigersinn</button>
+        <button on:click={() => rotateSelectedShape(-45)}>45° gegen Uhrzeigersinn</button>
+        <button on:click={() => rotateSelectedShape(180)}>180° drehen</button>
+      </div>
+    {/if}
+    
+    <!-- Tabellen-Dialog-Overlay -->
+    {#if drawingTool === DrawingTool.TABLE && browser}
+      <div class="table-dialog-overlay">
+        <div class="table-dialog">
+          <h3>Tabelle einfügen</h3>
+          
+          <div class="table-options">
+            <div class="option-group">
+              <label for="tableRows">Zeilen:</label>
+              <input type="number" id="tableRows" bind:value={tableRows} min="1" max="20">
+            </div>
+            
+            <div class="option-group">
+              <label for="tableColumns">Spalten:</label>
+              <input type="number" id="tableColumns" bind:value={tableColumns} min="1" max="20">
+            </div>
+            
+            <div class="option-group">
+              <label for="tableDesign">Design:</label>
+              <select id="tableDesign" bind:value={tableDesign}>
+                <option value="financial">Finanztabelle</option>
+                <option value="data">Datentabelle</option>
+                <option value="minimal">Minimal</option>
+                <option value="highContrast">Hoher Kontrast</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="table-preview">
+            <div class="preview-container">
+              <!-- Tabellen-Vorschau hier -->
+              <div class="table-preview-grid"
+                style="grid-template-columns: repeat({Math.min(tableColumns, 8)}, 1fr); 
+                      grid-template-rows: repeat({Math.min(tableRows, 6)}, 20px);"
+              >
+                {#each Array(Math.min(tableRows, 6)) as _, rowIndex}
+                  {#each Array(Math.min(tableColumns, 8)) as _, colIndex}
+                    <div 
+                      class="table-cell" 
+                      class:header-cell={rowIndex === 0} 
+                      class:first-col={colIndex === 0}
+                      style="
+                        background-color: {
+                          tableDesign === 'highContrast' ? (rowIndex === 0 ? '#333' : '#000') :
+                          tableDesign === 'data' ? (rowIndex === 0 ? '#f0f0f0' : (rowIndex % 2 === 0 ? '#fff' : '#f9f9f9')) :
+                          tableDesign === 'financial' ? (rowIndex === 0 ? '#f5f5f5' : '#fff') :
+                          rowIndex === 0 ? '#f8f8f8' : '#fff'
+                        };
+                        color: ${tableDesign === 'highContrast' ? '#fff' : '#000'};
+                      "
+                    ></div>
+                  {/each}
+                {/each}
+              </div>
+            </div>
+          </div>
+          
+          <div class="table-actions">
+            <button class="action-button cancel" on:click={() => {
+              DrawingService.setDrawingTool(DrawingTool.NONE);
+            }}>Abbrechen</button>
+            <button class="action-button create" on:click={createTable}>Erstellen</button>
+          </div>
+        </div>
       </div>
     {/if}
   </div>
@@ -855,6 +1123,25 @@
     }
   }
   
+  .rotation-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background-color: #3b82f6;
+    border: 2px solid white;
+    border-radius: 50%;
+    z-index: 50;
+    cursor: grab;
+    box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+  }
+  
+  .rotation-line {
+    position: absolute;
+    width: 1px;
+    background-color: #3b82f6;
+    z-index: 50;
+  }
+  
   .context-menu {
     position: absolute;
     background-color: white;
@@ -876,6 +1163,121 @@
       
       &:hover {
         background-color: #f3f4f6;
+      }
+    }
+  }
+
+  .context-menu-separator {
+    height: 1px;
+    background-color: #ddd;
+    margin: 0.5rem 0;
+  }
+
+  .table-dialog-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 70;
+  }
+
+  .table-dialog {
+    background-color: white;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    width: 400px;
+    max-width: 90%;
+  }
+
+  .table-options {
+    margin-bottom: 1rem;
+
+    .option-group {
+      margin-bottom: 0.5rem;
+
+      label {
+        display: block;
+        font-weight: bold;
+        margin-bottom: 0.25rem;
+      }
+
+      input,
+      select {
+        width: 100%;
+        padding: 0.5rem;
+        border: 1px solid #ddd;
+        border-radius: 0.25rem;
+        font-size: 0.875rem;
+      }
+    }
+  }
+
+  .table-preview {
+    margin-bottom: 1rem;
+
+    .preview-container {
+      overflow: hidden;
+      border: 1px solid #ddd;
+      border-radius: 0.25rem;
+      padding: 0.5rem;
+      background-color: #f9f9f9;
+
+      .table-preview-grid {
+        display: grid;
+        gap: 2px;
+
+        .table-cell {
+          border: 1px solid #ddd;
+          background-color: #fff;
+          height: 20px;
+        }
+
+        .header-cell {
+          font-weight: bold;
+          background-color: #f0f0f0;
+        }
+
+        .first-col {
+          font-weight: bold;
+        }
+      }
+    }
+  }
+
+  .table-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+
+    .action-button {
+      border: none;
+      border-radius: 0.25rem;
+      padding: 0.5rem 1rem;
+      font-size: 0.875rem;
+      cursor: pointer;
+
+      &.cancel {
+        background-color: #f43f5e;
+        color: white;
+
+        &:hover {
+          background-color: #e11d48;
+        }
+      }
+
+      &.create {
+        background-color: #10b981;
+        color: white;
+
+        &:hover {
+          background-color: #059669;
+        }
       }
     }
   }
