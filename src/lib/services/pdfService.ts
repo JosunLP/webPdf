@@ -1,9 +1,51 @@
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, LineCapStyle } from 'pdf-lib';
 import { writable, type Writable } from 'svelte/store';
 
 // PDF.js nur im Browser importieren
 // Verhindern von serverseitigem Import, der den DOMMatrix-Fehler verursacht
 let pdfjs: any = null;
+
+// Interface für Textformatierungen
+export interface TextFormatting {
+  fontFamily: string;
+  fontSize: number;
+  isBold: boolean;
+  isItalic: boolean;
+  isUnderline: boolean;
+}
+
+// Standard-Textformatierung
+export const defaultFormatting: TextFormatting = {
+  fontFamily: 'Arial',
+  fontSize: 12,
+  isBold: false,
+  isItalic: false,
+  isUnderline: false
+};
+
+// Typen für grafische Elemente
+export type Point = { x: number; y: number };
+
+export enum ShapeType {
+  RECTANGLE = 'rectangle',
+  CIRCLE = 'circle',
+  LINE = 'line',
+  ARROW = 'arrow',
+  TEXT = 'text'
+}
+
+// Interface für grafische Elemente
+export interface ShapeElement {
+  id: string;
+  type: ShapeType;
+  startPoint: Point;
+  endPoint?: Point;
+  color: string;
+  lineWidth: number;
+  filled?: boolean;
+  text?: string;
+  textFormatting?: TextFormatting;
+}
 
 // Interface für PDF-Seiten
 export interface PDFPage {
@@ -12,6 +54,8 @@ export interface PDFPage {
   width: number;
   height: number;
   canvas?: HTMLCanvasElement;
+  formatting: TextFormatting;
+  shapes: ShapeElement[]; // Array für grafische Elemente
 }
 
 // Interface für PDF-Dokumentinformationen
@@ -20,10 +64,46 @@ export interface PDFDocumentInfo {
   totalPages: number;
   pages: PDFPage[];
   modified: boolean;
+  currentFormatting: TextFormatting;
+}
+
+// Interface für Suchergebnisse
+export interface SearchResult {
+  pageNumber: number;
+  text: string;
+  matchIndex: number;
+  matchLength: number;
+}
+
+// Aktuelles Zeichenwerkzeug
+export enum DrawingTool {
+  NONE = 'none',
+  RECTANGLE = 'rectangle',
+  CIRCLE = 'circle',
+  LINE = 'line',
+  ARROW = 'arrow',
+  TEXT = 'text'
 }
 
 // Store für das aktuelle PDF-Dokument
 export const currentPdfDocument: Writable<PDFDocumentInfo | null> = writable(null);
+
+// Store für die aktuelle Textformatierung
+export const currentFormatting: Writable<TextFormatting> = writable({...defaultFormatting});
+
+// Store für das aktuelle Zeichenwerkzeug
+export const currentDrawingTool: Writable<DrawingTool> = writable(DrawingTool.NONE);
+
+// Store für die aktuellen Zeicheneigenschaften
+export const currentDrawingProperties: Writable<{
+  color: string;
+  lineWidth: number;
+  filled: boolean;
+}> = writable({
+  color: '#000000',
+  lineWidth: 2,
+  filled: false
+});
 
 // Hilfsfunktion zum Laden von PDF.js nur im Browser
 const loadPdfJs = async () => {
@@ -78,7 +158,9 @@ export class PDFService {
           textContent: textItems,
           width: viewport.width,
           height: viewport.height,
-          canvas
+          canvas,
+          formatting: {...defaultFormatting},
+          shapes: [] // Initialisiere leeres Array für grafische Elemente
         });
       }
       
@@ -86,7 +168,8 @@ export class PDFService {
         fileName: file.name,
         totalPages: pdfDoc.numPages,
         pages,
-        modified: false
+        modified: false,
+        currentFormatting: {...defaultFormatting}
       };
       
       // Aktualisieren des Stores
@@ -144,10 +227,115 @@ export class PDFService {
       // Erstellen eines neuen PDF-Dokuments mit den aktuellen Daten
       const pdfDoc = await PDFDocument.create();
       
-      // TODO: Implementieren Sie hier die Logik, um die aktualisierten Daten zu speichern
-      // Dies würde eine Konvertierung von Canvas/Textinhalten zurück zu einem PDF-Dokument beinhalten
-      // Für eine vollständige Implementierung wäre eine umfangreichere Logik erforderlich
+      // Schriftarten laden
+      const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const helveticaBoldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const helveticaOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+      const helveticaBoldOblique = await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique);
       
+      // Für jede Seite im Dokument
+      for (const page of documentInfo.pages) {
+        // Eine neue Seite mit den gleichen Abmessungen hinzufügen
+        const newPage = pdfDoc.addPage([page.width, page.height]);
+        
+        // Formatierungsoptionen anwenden
+        const fontSize = page.formatting.fontSize;
+        
+        // Schriftart basierend auf den Formatierungseigenschaften auswählen
+        let font = helveticaFont;
+        if (page.formatting.isBold && page.formatting.isItalic) {
+          font = helveticaBoldOblique;
+        } else if (page.formatting.isBold) {
+          font = helveticaBoldFont;
+        } else if (page.formatting.isItalic) {
+          font = helveticaOblique;
+        }
+        
+        newPage.setFont(font);
+        newPage.setFontSize(fontSize);
+        
+        // Den Textinhalt der Seite hinzufügen
+        if (page.textContent) {
+          // Wir müssen den Text in Zeilen aufteilen, um ihn angemessen zu formatieren
+          const lines = page.textContent.split('\n');
+          const lineHeight = fontSize * 1.2;
+          
+          lines.forEach((line, index) => {
+            // Text zeichnen
+            newPage.drawText(line, {
+              x: 50,
+              y: page.height - 50 - (lineHeight * index), // Von oben nach unten
+              size: fontSize,
+              font: font,
+              color: rgb(0, 0, 0)
+            });
+            
+            // Unterstreichung hinzufügen, wenn erforderlich
+            if (page.formatting.isUnderline) {
+              const textWidth = font.widthOfTextAtSize(line, fontSize);
+              newPage.drawLine({
+                start: { x: 50, y: page.height - 52 - (lineHeight * index) - fontSize/8 },
+                end: { x: 50 + textWidth, y: page.height - 52 - (lineHeight * index) - fontSize/8 },
+                thickness: fontSize / 20,
+                color: rgb(0, 0, 0)
+              });
+            }
+          });
+        }
+
+        // Grafische Elemente hinzufügen
+        for (const shape of page.shapes) {
+          switch (shape.type) {
+            case ShapeType.RECTANGLE:
+              newPage.drawRectangle({
+                x: shape.startPoint.x,
+                y: shape.startPoint.y,
+                width: shape.endPoint ? shape.endPoint.x - shape.startPoint.x : 0,
+                height: shape.endPoint ? shape.endPoint.y - shape.startPoint.y : 0,
+                color: rgb(...hexToRgb(shape.color)),
+                borderWidth: shape.lineWidth,
+                borderColor: rgb(...hexToRgb(shape.color)),
+                opacity: shape.filled ? 1 : 0
+              });
+              break;
+            case ShapeType.CIRCLE:
+              newPage.drawEllipse({
+                x: shape.startPoint.x,
+                y: shape.startPoint.y,
+                xScale: shape.endPoint ? (shape.endPoint.x - shape.startPoint.x) / 2 : 0,
+                yScale: shape.endPoint ? (shape.endPoint.y - shape.startPoint.y) / 2 : 0,
+                color: rgb(...hexToRgb(shape.color)),
+                borderWidth: shape.lineWidth,
+                borderColor: rgb(...hexToRgb(shape.color)),
+                opacity: shape.filled ? 1 : 0
+              });
+              break;
+            case ShapeType.LINE:
+              newPage.drawLine({
+                start: shape.startPoint,
+                end: shape.endPoint || shape.startPoint,
+                thickness: shape.lineWidth,
+                color: rgb(...hexToRgb(shape.color)),
+                lineCap: LineCapStyle.Round
+              });
+              break;
+            case ShapeType.TEXT:
+              if (shape.text) {
+                const textFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+                newPage.drawText(shape.text, {
+                  x: shape.startPoint.x,
+                  y: shape.startPoint.y,
+                  size: shape.textFormatting?.fontSize || 12,
+                  font: textFont,
+                  color: rgb(...hexToRgb(shape.color))
+                });
+              }
+              break;
+          }
+        }
+      }
+      
+      // PDF-Datei speichern und als Blob zurückgeben
       const pdfBytes = await pdfDoc.save();
       return new Blob([pdfBytes], { type: 'application/pdf' });
     } catch (error) {
@@ -166,7 +354,12 @@ export class PDFService {
       // Finden der Seite und Aktualisieren des Textinhalts
       const updatedPages = doc.pages.map((page) => {
         if (page.pageNumber === pageNumber) {
-          return { ...page, textContent: newText };
+          return { 
+            ...page, 
+            textContent: newText,
+            // Aktuelle Formatierung auf die Seite übertragen
+            formatting: {...doc.currentFormatting}
+          };
         }
         return page;
       });
@@ -179,4 +372,103 @@ export class PDFService {
       };
     });
   }
+
+  /**
+   * Aktualisiert die aktuelle Formatierung im Dokument
+   */
+  static updateFormatting(formatting: Partial<TextFormatting>): void {
+    currentPdfDocument.update((doc) => {
+      if (!doc) return null;
+      
+      // Aktuelle Formatierung mit neuen Werten aktualisieren
+      const updatedFormatting = {
+        ...doc.currentFormatting,
+        ...formatting
+      };
+      
+      // Aktuelle Formatierung im Store aktualisieren
+      currentFormatting.set(updatedFormatting);
+      
+      // Zurückgeben des aktualisierten Dokuments
+      return {
+        ...doc,
+        currentFormatting: updatedFormatting,
+        modified: true
+      };
+    });
+  }
+  
+  /**
+   * Setzt die aktuelle Formatierung basierend auf der aktuellen Seite
+   */
+  static setFormattingFromPage(pageNumber: number): void {
+    currentPdfDocument.update((doc) => {
+      if (!doc) return null;
+      
+      // Finden der aktuellen Seite
+      const currentPage = doc.pages.find(page => page.pageNumber === pageNumber);
+      if (!currentPage) return doc;
+      
+      // Formatierung der Seite als aktuelle Formatierung setzen
+      currentFormatting.set({...currentPage.formatting});
+      
+      return {
+        ...doc,
+        currentFormatting: {...currentPage.formatting}
+      };
+    });
+  }
+
+  /**
+   * Sucht nach Text im PDF-Dokument
+   */
+  static searchText(searchTerm: string): SearchResult[] {
+    const results: SearchResult[] = [];
+    let doc: PDFDocumentInfo | null = null;
+    
+    // Aktuellen Dokumentstatus einmalig lesen
+    currentPdfDocument.subscribe(value => {
+      doc = value;
+    })();
+    
+    if (!doc || !searchTerm.trim()) {
+      return results;
+    }
+    
+    // Groß-/Kleinschreibung ignorieren
+    const term = searchTerm.toLowerCase();
+    
+    // Durchsuche jede Seite
+    doc.pages.forEach(page => {
+      const text = page.textContent.toLowerCase();
+      let startIndex = 0;
+      let matchIndex;
+      
+      // Finde alle Vorkommen des Suchbegriffs auf der Seite
+      while ((matchIndex = text.indexOf(term, startIndex)) !== -1) {
+        results.push({
+          pageNumber: page.pageNumber,
+          text: page.textContent.substring(matchIndex, matchIndex + term.length),
+          matchIndex,
+          matchLength: term.length
+        });
+        
+        // Weitersuchen ab der nächsten Position
+        startIndex = matchIndex + term.length;
+      }
+    });
+    
+    return results;
+  }
+}
+
+/**
+ * Hilfsfunktion zum Konvertieren von Hex-Farben in RGB
+ */
+function hexToRgb(hex: string): [number, number, number] {
+  const bigint = parseInt(hex.replace('#', ''), 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return [r / 255, g / 255, b / 255];
 }

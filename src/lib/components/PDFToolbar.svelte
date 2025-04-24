@@ -1,17 +1,82 @@
 <script lang="ts">
-  import type { PDFDocumentInfo } from '$lib/services/pdfService';
+  import type { PDFDocumentInfo, TextFormatting } from '$lib/services/pdfService';
+  import { currentFormatting, PDFService, DrawingTool, currentDrawingTool, currentDrawingProperties } from '$lib/services/pdfService';
+  import { DrawingService } from '$lib/services/drawingService';
+  import { onMount, onDestroy } from 'svelte';
   
   export let pdfDocument: PDFDocumentInfo | null = null;
   export let onFileOpen: () => void;
   export let onNewFile: () => void;
   export let onSaveFile: () => void;
   
-  // Text-Formatierungsoptionen werden in Version 2 implementiert
-  let fontSize = 16;
+  // Lokale Formatierungsvariablen, die später an das Dokument gebunden werden
+  let fontSize = 12;
   let fontFamily = 'Arial';
   let isBold = false;
   let isItalic = false;
   let isUnderline = false;
+  
+  // Zeichenvariablen
+  let drawingTool = DrawingTool.NONE;
+  let drawingColor = '#000000';
+  let drawingLineWidth = 2;
+  let drawingFilled = false;
+  
+  // Abonnieren der aktuellen Formatierung
+  const unsubscribeFormatting = currentFormatting.subscribe(formatting => {
+    fontSize = formatting.fontSize;
+    fontFamily = formatting.fontFamily;
+    isBold = formatting.isBold;
+    isItalic = formatting.isItalic;
+    isUnderline = formatting.isUnderline;
+  });
+  
+  // Abonnieren des aktuellen Zeichenwerkzeugs
+  const unsubscribeDrawingTool = currentDrawingTool.subscribe(tool => {
+    drawingTool = tool;
+  });
+  
+  // Abonnieren der aktuellen Zeicheneigenschaften
+  const unsubscribeDrawingProperties = currentDrawingProperties.subscribe(props => {
+    drawingColor = props.color;
+    drawingLineWidth = props.lineWidth;
+    drawingFilled = props.filled;
+  });
+  
+  // Aktuelle Formatierung aktualisieren, wenn sich ein Wert ändert
+  $: if (pdfDocument) {
+    PDFService.updateFormatting({
+      fontSize,
+      fontFamily,
+      isBold,
+      isItalic,
+      isUnderline
+    });
+  }
+  
+  // Zeichenwerkzeug umschalten
+  function toggleDrawingTool(tool: DrawingTool): void {
+    if (drawingTool === tool) {
+      DrawingService.setDrawingTool(DrawingTool.NONE);
+    } else {
+      DrawingService.setDrawingTool(tool);
+    }
+  }
+  
+  // Zeicheneigenschaften aktualisieren
+  $: if (pdfDocument) {
+    DrawingService.updateDrawingProperties({
+      color: drawingColor,
+      lineWidth: drawingLineWidth,
+      filled: drawingFilled
+    });
+  }
+  
+  onDestroy(() => {
+    unsubscribeFormatting();
+    unsubscribeDrawingTool();
+    unsubscribeDrawingProperties();
+  });
 </script>
 
 <div class="pdf-toolbar">
@@ -45,7 +110,102 @@
   
   <div class="toolbar-separator"></div>
   
-  <!-- Basisformatierungen für Version 1 -->
+  <!-- Zeichenwerkzeuge -->
+  <div class="toolbar-section drawing-tools">
+    <button 
+      class="toolbar-tool-button" 
+      class:active={drawingTool === DrawingTool.RECTANGLE}
+      on:click={() => toggleDrawingTool(DrawingTool.RECTANGLE)} 
+      disabled={!pdfDocument}
+      title="Rechteck zeichnen"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <rect x="4" y="4" width="16" height="16" stroke-width="2" />
+      </svg>
+    </button>
+    
+    <button 
+      class="toolbar-tool-button" 
+      class:active={drawingTool === DrawingTool.CIRCLE}
+      on:click={() => toggleDrawingTool(DrawingTool.CIRCLE)} 
+      disabled={!pdfDocument}
+      title="Kreis zeichnen"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <circle cx="12" cy="12" r="9" stroke-width="2" />
+      </svg>
+    </button>
+    
+    <button 
+      class="toolbar-tool-button" 
+      class:active={drawingTool === DrawingTool.LINE}
+      on:click={() => toggleDrawingTool(DrawingTool.LINE)} 
+      disabled={!pdfDocument}
+      title="Linie zeichnen"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <line x1="4" y1="20" x2="20" y2="4" stroke-width="2" />
+      </svg>
+    </button>
+    
+    <button 
+      class="toolbar-tool-button" 
+      class:active={drawingTool === DrawingTool.ARROW}
+      on:click={() => toggleDrawingTool(DrawingTool.ARROW)} 
+      disabled={!pdfDocument}
+      title="Pfeil zeichnen"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+      </svg>
+    </button>
+    
+    <button 
+      class="toolbar-tool-button" 
+      class:active={drawingTool === DrawingTool.TEXT}
+      on:click={() => toggleDrawingTool(DrawingTool.TEXT)} 
+      disabled={!pdfDocument}
+      title="Text hinzufügen"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M7 3v18M17 3v18" />
+      </svg>
+    </button>
+    
+    <div class="drawing-properties">
+      <input 
+        type="color" 
+        bind:value={drawingColor} 
+        disabled={!pdfDocument || drawingTool === DrawingTool.NONE}
+        title="Farbe wählen"
+      />
+      
+      <select 
+        bind:value={drawingLineWidth} 
+        disabled={!pdfDocument || drawingTool === DrawingTool.NONE}
+        title="Linienstärke"
+      >
+        <option value={1}>Dünn</option>
+        <option value={2}>Mittel</option>
+        <option value={4}>Dick</option>
+        <option value={8}>Extra dick</option>
+      </select>
+      
+      <label class="fill-checkbox">
+        <input 
+          type="checkbox" 
+          bind:checked={drawingFilled} 
+          disabled={!pdfDocument || (drawingTool !== DrawingTool.RECTANGLE && drawingTool !== DrawingTool.CIRCLE)}
+          title="Gefüllt"
+        />
+        <span>Gefüllt</span>
+      </label>
+    </div>
+  </div>
+  
+  <div class="toolbar-separator"></div>
+  
+  <!-- Formatierungen -->
   <div class="toolbar-section format-actions">
     <div class="select-wrapper">
       <select bind:value={fontFamily} disabled={!pdfDocument} class="font-select">
@@ -119,12 +279,68 @@
     background-color: #f9fafb;
     border-bottom: 1px solid #e5e7eb;
     gap: 1rem;
+    flex-wrap: wrap;
   }
   
   .toolbar-section {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+  }
+  
+  .drawing-tools {
+    .drawing-properties {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-left: 0.5rem;
+      padding-left: 0.5rem;
+      border-left: 1px solid #e5e7eb;
+      
+      input[type="color"] {
+        width: 2rem;
+        height: 2rem;
+        padding: 0;
+        border: 1px solid #d1d5db;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        
+        &:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+      }
+      
+      select {
+        height: 2rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.25rem;
+        padding: 0 0.5rem;
+        
+        &:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+      }
+      
+      .fill-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.875rem;
+        color: #4b5563;
+        cursor: pointer;
+        
+        &:disabled, &.disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        
+        input[type="checkbox"] {
+          margin: 0;
+        }
+      }
+    }
   }
   
   .toolbar-button {
@@ -146,6 +362,40 @@
     &:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+    
+    svg {
+      width: 1.25rem;
+      height: 1.25rem;
+    }
+  }
+  
+  .toolbar-tool-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.25rem;
+    background-color: white;
+    color: #374151;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    
+    &:hover:not(:disabled) {
+      background-color: #f3f4f6;
+    }
+    
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    &.active {
+      background-color: #e5e7eb;
+      border-color: #9ca3af;
+      color: #1f2937;
     }
     
     svg {
