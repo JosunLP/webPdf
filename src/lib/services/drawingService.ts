@@ -151,6 +151,8 @@ export class DrawingService {
         return this.isPointOnLine(point, shape, tolerance);
       case ShapeType.TEXT:
         return this.isPointNearTextPosition(point, shape, tolerance);
+      case ShapeType.IMAGE:
+        return this.isPointInRectangle(point, shape, tolerance);
       default:
         return false;
     }
@@ -284,11 +286,17 @@ export class DrawingService {
    * @param startPoint Startpunkt des Elements
    * @param endPoint Endpunkt des Elements (optional)
    * @param text Textinhalt (nur für Text-Elemente)
+   * @param imageData Base64-codierte Bilddaten (nur für Bild-Elemente)
+   * @param imageWidth Ursprüngliche Bildbreite (nur für Bild-Elemente)
+   * @param imageHeight Ursprüngliche Bildhöhe (nur für Bild-Elemente)
    */
   static createShape(
     startPoint: Point, 
     endPoint?: Point, 
-    text?: string
+    text?: string,
+    imageData?: string,
+    imageWidth?: number,
+    imageHeight?: number
   ): ShapeElement {
     // Import 'get' for direct store access
 
@@ -308,6 +316,7 @@ export class DrawingService {
       case DrawingTool.LINE: shapeType = ShapeType.LINE; break;
       case DrawingTool.ARROW: shapeType = ShapeType.ARROW; break;
       case DrawingTool.TEXT: shapeType = ShapeType.TEXT; break;
+      case DrawingTool.IMAGE: shapeType = ShapeType.IMAGE; break;
       default: shapeType = ShapeType.RECTANGLE;
     }
     
@@ -322,8 +331,149 @@ export class DrawingService {
       filled: properties.filled,
       text: text,
       // Textformatierung für Text-Elemente hinzufügen
-      textFormatting: shapeType === ShapeType.TEXT ? {...formatting} : undefined
+      textFormatting: shapeType === ShapeType.TEXT ? {...formatting} : undefined,
+      // Bilddaten für Bild-Elemente
+      imageData: shapeType === ShapeType.IMAGE ? imageData : undefined,
+      imageWidth: shapeType === ShapeType.IMAGE ? imageWidth : undefined,
+      imageHeight: shapeType === ShapeType.IMAGE ? imageHeight : undefined
     };
+  }
+  
+  /**
+   * Fügt ein Bild zu einer PDF-Seite hinzu
+   * @param pageNumber Die Seitennummer
+   * @param position Die Position des Bildes
+   * @param imageFile Die Bilddatei
+   */
+  static async addImage(pageNumber: number, position: Point, imageFile: File): Promise<void> {
+    try {
+      // Bild in Base64 konvertieren
+      const base64Data = await this.fileToBase64(imageFile);
+      
+      // Originalgröße des Bildes ermitteln
+      const dimensions = await this.getImageDimensions(base64Data);
+      
+      // Seitengröße ermitteln
+      const doc = get(currentPdfDocument);
+      if (!doc) return;
+      
+      const page = doc.pages.find(p => p.pageNumber === pageNumber);
+      if (!page) return;
+      
+      // Maximale Größe für das Bild berechnen (80% der Seite)
+      const maxWidth = page.width * 0.8;
+      const maxHeight = page.height * 0.8;
+      
+      // Skalierungsfaktor berechnen
+      let scale = 1;
+      if (dimensions.width > maxWidth || dimensions.height > maxHeight) {
+        const scaleWidth = maxWidth / dimensions.width;
+        const scaleHeight = maxHeight / dimensions.height;
+        scale = Math.min(scaleWidth, scaleHeight);
+      }
+      
+      // Bildgröße berechnen
+      const width = dimensions.width * scale;
+      const height = dimensions.height * scale;
+      
+      // Endposition berechnen (zentriert um die Klickposition)
+      const endPoint = {
+        x: position.x + width,
+        y: position.y + height
+      };
+      
+      // Shape erstellen und hinzufügen
+      const imageShape = this.createShape(
+        position,
+        endPoint,
+        undefined,
+        base64Data,
+        dimensions.width,
+        dimensions.height
+      );
+      
+      this.addShape(pageNumber, imageShape);
+    } catch (error) {
+      console.error("Fehler beim Hinzufügen des Bildes:", error);
+      alert("Das Bild konnte nicht hinzugefügt werden.");
+    }
+  }
+  
+  /**
+   * Konvertiert eine Datei in Base64
+   * @param file Die zu konvertierende Datei
+   * @returns Base64-codierte Daten
+   */
+  private static async fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
+  }
+  
+  /**
+   * Ermittelt die Dimensionen eines Bildes
+   * @param base64Data Base64-codierte Bilddaten
+   * @returns Bildbreite und -höhe
+   */
+  private static getImageDimensions(base64Data: string): Promise<{width: number, height: number}> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        resolve({
+          width: img.width,
+          height: img.height
+        });
+      };
+      img.onerror = () => {
+        reject(new Error("Bild konnte nicht geladen werden"));
+      };
+      img.src = base64Data;
+    });
+  }
+  
+  /**
+   * Fügt ein Bild zum aktuellen Dokument hinzu
+   * Der Nutzer wird aufgefordert, auf die Stelle zu klicken, an der das Bild eingefügt werden soll
+   * @param imageFile Die Bilddatei
+   */
+  static addImageToDocument(imageFile: File): void {
+    // Bildwerkzeug aktivieren
+    DrawingService.setDrawingTool(DrawingTool.IMAGE);
+    
+    // Globalen Event-Listener für Klickereignis auf PDF-Seite hinzufügen
+    const handleClick = (event: MouseEvent) => {
+      // Ziel-Element identifizieren
+      const target = event.target as HTMLElement;
+      const pageElement = target.closest('.pdf-page');
+      
+      if (pageElement) {
+        // Seitennummer extrahieren
+        const pageNumber = parseInt(pageElement.getAttribute('data-page-number') || '1', 10);
+        
+        // Klickposition relativ zur Seite ermitteln
+        const rect = pageElement.getBoundingClientRect();
+        const position = {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top
+        };
+        
+        // Bild zur Seite hinzufügen
+        DrawingService.addImage(pageNumber, position, imageFile);
+        
+        // Event-Listener entfernen und Werkzeug zurücksetzen
+        document.removeEventListener('click', handleClick);
+        DrawingService.setDrawingTool(DrawingTool.NONE);
+      }
+    };
+    
+    // Event-Listener hinzufügen
+    document.addEventListener('click', handleClick, { once: true });
+    
+    // Hinweis anzeigen
+    alert('Bitte klicken Sie auf die Stelle, an der das Bild eingefügt werden soll.');
   }
   
   /**
@@ -458,7 +608,7 @@ export class DrawingService {
           ctx.fill();
           break;
         }
-          
+        
         case ShapeType.TEXT:
           if (shape.text) {
             // Text-Formatierung anwenden
@@ -480,6 +630,24 @@ export class DrawingService {
               ctx.lineTo(start.x + textWidth, start.y + 2);
               ctx.stroke();
             }
+          }
+          break;
+
+        case ShapeType.IMAGE:
+          if (shape.imageData) {
+            // Bild zeichnen, wenn Bilddaten vorhanden sind
+            const img = new Image();
+            img.onload = () => {
+              const width = end.x - start.x;
+              const height = end.y - start.y;
+              ctx.drawImage(img, start.x, start.y, width, height);
+            };
+            img.src = shape.imageData;
+
+            // Rahmen um das Bild zeichnen
+            ctx.beginPath();
+            ctx.rect(start.x, start.y, end.x - start.x, end.y - start.y);
+            ctx.stroke();
           }
           break;
       }

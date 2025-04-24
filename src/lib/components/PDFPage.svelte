@@ -317,6 +317,7 @@
     class="pdf-page"
     bind:this={container}
     style="width: {scaledWidth}px; height: {scaledHeight}px;"
+    data-page-number="{page.pageNumber}"
     on:mousedown={handleMouseDown}
     on:mousemove={handleMouseMove}
     on:mouseup={handleMouseUp}

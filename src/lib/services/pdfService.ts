@@ -44,15 +44,21 @@ export const defaultFormatting: TextFormatting = {
 // Typen für grafische Elemente
 export type Point = { x: number; y: number };
 
+/**
+ * Verschiedene Arten von Shapes, die auf einer PDF-Seite gezeichnet werden können
+ */
 export enum ShapeType {
   RECTANGLE = 'rectangle',
   CIRCLE = 'circle',
   LINE = 'line',
   ARROW = 'arrow',
-  TEXT = 'text'
+  TEXT = 'text',
+  IMAGE = 'image'
 }
 
-// Interface für grafische Elemente
+/**
+ * Schnittstelle für grafische Elemente (Formen, Linien, etc.)
+ */
 export interface ShapeElement {
   id: string;
   type: ShapeType;
@@ -63,6 +69,9 @@ export interface ShapeElement {
   filled?: boolean;
   text?: string;
   textFormatting?: TextFormatting;
+  imageData?: string;  // Base64-codiertes Bild
+  imageWidth?: number; // Originalgröße
+  imageHeight?: number; // Originalgröße
 }
 
 // Interface für PDF-Seiten
@@ -103,7 +112,8 @@ export enum DrawingTool {
   ARROW = 'arrow',
   TEXT = 'text',
   COMMENT = 'comment',
-  SELECT = 'select'  // Neues Auswahlwerkzeug
+  SELECT = 'select',
+  IMAGE = 'image'  // Neues Zeichenwerkzeug für Bilder
 }
 
 // Store für das aktuelle PDF-Dokument
@@ -740,6 +750,39 @@ export class PDFService {
                     thickness: formatting.fontSize / 20,
                     color: rgb(...hexToRgb(shape.color))
                   });
+                }
+              }
+              break;
+              
+            case ShapeType.IMAGE:
+              // Bild einfügen, wenn Bilddaten vorhanden sind
+              if (shape.imageData && shape.endPoint) {
+                try {
+                  // Base64-Präfix entfernen und Bilddaten dekodieren
+                  const base64Data = shape.imageData.replace(/^data:image\/\w+;base64,/, '');
+                  
+                  // Prüfen, ob es ein JPEG oder PNG ist und entsprechend einbetten
+                  let embeddedImage;
+                  if (shape.imageData.includes('data:image/jpeg')) {
+                    embeddedImage = await pdfDoc.embedJpg(Buffer.from(base64Data, 'base64'));
+                  } else {
+                    // Standardmäßig als PNG behandeln
+                    embeddedImage = await pdfDoc.embedPng(Buffer.from(base64Data, 'base64'));
+                  }
+                  
+                  // Bildgröße berechnen
+                  const width = shape.endPoint.x - shape.startPoint.x;
+                  const height = shape.endPoint.y - shape.startPoint.y;
+                  
+                  // Bild zeichnen
+                  newPage.drawImage(embeddedImage, {
+                    x: shape.startPoint.x,
+                    y: page.height - shape.startPoint.y - height,
+                    width,
+                    height
+                  });
+                } catch (error) {
+                  console.error("Fehler beim Einbetten des Bildes ins PDF:", error);
                 }
               }
               break;
